@@ -1,0 +1,13 @@
+{
+  "version": "v3",
+  "description": "Removes customer_id — BREAKING change",
+  "columns": [
+    {"name": "order_id",    "type": "string",    "nullable": false},
+    {"name": "product_id",  "type": "string",    "nullable": false},
+    {"name": "quantity",    "type": "integer",   "nullable": false},
+    {"name": "unit_price",  "type": "double",    "nullable": false},
+    {"name": "status",      "type": "string",    "nullable": false},
+    {"name": "created_at",  "type": "timestamp", "nullable": false},
+    {"name": "updated_at",  "type": "timestamp", "nullable": false}
+  ]
+}

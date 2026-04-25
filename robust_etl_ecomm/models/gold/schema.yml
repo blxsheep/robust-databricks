@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: daily_revenue
+    description: >
+      Daily revenue aggregation. Incremental merge on order_date.
+      Re-aggregates the most recent date on each run to capture late-arriving orders.
+    columns:
+      - name: order_date
+        tests: [not_null, unique]
+      - name: gross_revenue
+        description: "Sum of line_total for all orders on this date."
+        tests: [not_null]
+      - name: total_orders
+        tests: [not_null]

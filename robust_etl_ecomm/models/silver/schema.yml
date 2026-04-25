@@ -1,0 +1,38 @@
+version: 2
+
+sources:
+  - name: bronze
+    catalog: reliability_engine
+    schema: bronze
+    tables:
+      - name: raw_orders
+        description: "Raw ingested orders with system metadata columns."
+        columns:
+          - name: order_id
+            description: "Unique order identifier."
+            tests: [not_null, unique]
+          - name: customer_id
+            tests: [not_null]
+          - name: product_id
+            tests: [not_null]
+          - name: quantity
+            tests: [not_null]
+          - name: unit_price
+            tests: [not_null]
+          - name: status
+            tests: [not_null]
+          - name: created_at
+            tests: [not_null]
+          - name: updated_at
+            tests: [not_null]
+
+models:
+  - name: orders_cleaned
+    description: >
+      Incremental merge on order_id. Holds current state of each order.
+      Late-arriving updates overwrite stale rows — no duplicates, no full reprocessing.
+    columns:
+      - name: order_id
+        tests: [not_null, unique]
+      - name: line_total
+        description: "quantity * unit_price, computed at ingestion time."

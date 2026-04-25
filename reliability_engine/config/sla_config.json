@@ -1,0 +1,21 @@
+{
+  "sla_checks": [
+    {
+      "check_name": "freshness",
+      "description": "Bronze table must have data within the last N hours",
+      "threshold_hours": 6,
+      "business_impact": "Revenue reporting shows stale numbers."
+    },
+    {
+      "check_name": "completeness",
+      "description": "Row count must not drop below expected minimum per run",
+      "min_rows_per_run": 100,
+      "business_impact": "Order fulfillment risk."
+    },
+    {
+      "check_name": "schema_consistency",
+      "description": "Active schema must match schema_config.json at every run",
+      "business_impact": "Downstream dbt models fail silently."
+    }
+  ]
+}

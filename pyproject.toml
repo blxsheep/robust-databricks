@@ -1,0 +1,33 @@
+[tool.poetry]
+name = "robust-databricks"
+version = "0.1.0"
+description = "Data reliability platform for pipelines that cannot afford to fail silently."
+authors = ["blxsheep"]
+readme = "README.md"
+packages = [
+    { include = "scripts", from = "reliability_engine" },
+]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.13"
+pyspark = "3.5.1"
+delta-spark = "3.2.0"
+matplotlib = "^3.9"
+dbt-databricks = "^1.12.0"
+dbt = "^1.0.0.40.17"
+
+[tool.poetry.group.dbt.dependencies]
+dbt-databricks = "^1.9"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2"
+
+[tool.poetry.group.docs.dependencies]
+mkdocs-material = "^9.5"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["reliability_engine/tests"]

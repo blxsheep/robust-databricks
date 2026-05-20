@@ -1,0 +1,56 @@
+site_name: Robust Databricks — Reliability Engine
+site_description: A data reliability platform for pipelines that cannot afford to fail silently.
+site_author: blxsheep
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: deep orange
+      accent: orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: deep orange
+      accent: orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+
+nav:
+  - Home: index.md
+  - Setup: setup.md
+  - Architecture: architecture.md
+  - Components:
+      - Schema Sentinel: components/schema-sentinel.md
+      - Ingestion (Bronze): components/ingestion.md
+      - dbt Models: components/dbt-models.md
+      - SLA Monitor: components/sla-monitor.md
+      - Cost Governance: components/cost-governance.md
+  - Git & Databricks: git-databricks.md
+  - Testing: testing.md
+  - Reference:
+      - Schema Config: reference/schema-config.md
+      - Catalog Layout: reference/catalog-layout.md
+      - ADR: reference/adr.md

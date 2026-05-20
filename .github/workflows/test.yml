@@ -16,9 +16,15 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: "1.8.3"
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
       - name: Install dependencies
-        run: |
-          pip install pyspark==3.5.1 delta-spark==3.2.0 pytest
+        run: poetry install --with dev
 
       - name: Run tests
-        run: pytest reliability_engine/tests/ -v
+        run: poetry run pytest

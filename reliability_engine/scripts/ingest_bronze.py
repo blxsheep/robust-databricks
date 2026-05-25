@@ -25,7 +25,11 @@ logger = logging.getLogger(__name__)
 
 spark = SparkSession.builder.getOrCreate()
 
-CONFIG_PATH  = Path(__file__).parent.parent / "config" / "schema_config.json"
+try:
+    CONFIG_PATH = Path(__file__).parent.parent / "config" / "schema_config.json"
+except NameError:
+    # Running in notebook/REPL where __file__ is not defined
+    CONFIG_PATH = Path("/Users/c.voranipit@gmail.com/robust-databricks/reliability_engine/config/schema_config.json")
 TARGET_TABLE = "reliability_engine.bronze.raw_orders"
 COST_LOG     = "reliability_engine.observability.cost_attribution_log"
 PIPELINE_ID  = "ingest_bronze_v1"

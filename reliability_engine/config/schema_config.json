@@ -1,6 +1,6 @@
 {
   "version": "v1",
-  "description": "Active expected schema — sentinel reads this file at ingestion time",
+  "description": "Baseline schema — 8 columns",
   "columns": [
     {"name": "order_id",     "type": "string",    "nullable": false},
     {"name": "customer_id",  "type": "string",    "nullable": false},

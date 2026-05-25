@@ -40,13 +40,17 @@ class SentinelResult:
 
 # Spark/Databricks type aliases that are semantically equivalent.
 # Without this, "integer" vs "int" would be misclassified as a BREAKING type change.
+# Spark/Databricks type aliases that are semantically equivalent.
+# PySpark infers Python int as LongType ("long") by default, so long/bigint
+# must normalize to the same canonical as "integer" — numeric widening is non-breaking.
 _TYPE_ALIASES: dict[str, str] = {
-    "int":        "integer",
-    "long":       "bigint",
-    "float":      "double",
-    "bool":       "boolean",
-    "str":        "string",
-    "varchar":    "string",
+    "int":           "integer",
+    "long":          "integer",   # PySpark default for Python int
+    "bigint":        "integer",   # SQL alias for long
+    "float":         "double",
+    "bool":          "boolean",
+    "str":           "string",
+    "varchar":       "string",
     "timestamp_ntz": "timestamp",
 }
 

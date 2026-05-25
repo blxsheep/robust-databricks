@@ -6,9 +6,12 @@ Unity Catalog managed table: reliability_engine.bronze.raw_orders
 
 import random
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from pyspark.sql import SparkSession
+from pyspark.sql.types import (
+    DoubleType, IntegerType, StringType, StructField, StructType, TimestampType,
+)
 
 spark = SparkSession.builder.getOrCreate()
 
@@ -19,10 +22,21 @@ CUSTOMERS = [f"cust_{i:06d}" for i in range(1, 201)]
 TARGET_TABLE = "reliability_engine.bronze.raw_orders"
 NUM_ROWS = 500
 
+BRONZE_SCHEMA = StructType([
+    StructField("order_id",    StringType(),    nullable=False),
+    StructField("customer_id", StringType(),    nullable=False),
+    StructField("product_id",  StringType(),    nullable=False),
+    StructField("quantity",    IntegerType(),   nullable=False),
+    StructField("unit_price",  DoubleType(),    nullable=False),
+    StructField("status",      StringType(),    nullable=False),
+    StructField("created_at",  TimestampType(), nullable=False),
+    StructField("updated_at",  TimestampType(), nullable=False),
+])
+
 
 def generate_orders(n: int, base_time: datetime = None) -> list[dict]:
     if base_time is None:
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
 
     rows = []
     for _ in range(n):
@@ -42,7 +56,7 @@ def generate_orders(n: int, base_time: datetime = None) -> list[dict]:
 
 def main():
     orders = generate_orders(NUM_ROWS)
-    df = spark.createDataFrame(orders)
+    df = spark.createDataFrame(orders, schema=BRONZE_SCHEMA)
     df.write.format("delta").mode("append").saveAsTable(TARGET_TABLE)
     print(f"Written {df.count()} rows to {TARGET_TABLE}")
 

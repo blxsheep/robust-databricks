@@ -18,6 +18,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pyspark.sql import SparkSession, functions as F
+from pyspark.sql.types import (
+    DoubleType, IntegerType, StringType, StructField, StructType, TimestampType,
+)
 from schema_sentinel import SchemaBreakingChangeError, run as sentinel_run
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -33,6 +36,19 @@ except NameError:
 TARGET_TABLE = "reliability_engine.bronze.raw_orders"
 COST_LOG     = "reliability_engine.observability.cost_attribution_log"
 PIPELINE_ID  = "ingest_bronze_v1"
+
+# Explicit schema matching schema_config.json v1.
+# Passed to createDataFrame() to prevent Spark from inferring Python int as LongType.
+BRONZE_SCHEMA = StructType([
+    StructField("order_id",    StringType(),    nullable=False),
+    StructField("customer_id", StringType(),    nullable=False),
+    StructField("product_id",  StringType(),    nullable=False),
+    StructField("quantity",    IntegerType(),   nullable=False),
+    StructField("unit_price",  DoubleType(),    nullable=False),
+    StructField("status",      StringType(),    nullable=False),
+    StructField("created_at",  TimestampType(), nullable=False),
+    StructField("updated_at",  TimestampType(), nullable=False),
+])
 
 def _schema_version() -> str:
     with open(CONFIG_PATH) as f:
@@ -111,6 +127,6 @@ def _log_cost(runtime_seconds: float, rows_processed: int, run_type: str):
 if __name__ == "__main__":
     from generate_data import generate_orders
     orders = generate_orders(500)
-    df = spark.createDataFrame(orders)
+    df = spark.createDataFrame(orders, schema=BRONZE_SCHEMA)
     rows = ingest(df)
     print(f"Ingested {rows} rows into {TARGET_TABLE}")

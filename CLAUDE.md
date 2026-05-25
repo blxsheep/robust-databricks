@@ -42,21 +42,33 @@ reliability_engine/
 ├── scripts/
 │   ├── generate_data.py        # Synthetic order data → UC managed table
 │   ├── ingest_bronze.py        # Ingestion with validation and metadata
-│   └── schema_sentinel.py      # Schema change classifier and router
-├── dbt/
-│   ├── models/silver/          # Incremental merge on order_id
-│   └── models/gold/            # Daily revenue aggregation
+│   ├── schema_sentinel.py      # Schema change classifier and router
+│   └── sla_monitor.py          # Three SLA checks → sla_check_log
 ├── tests/
 │   └── test_idempotency.py     # Incremental pipeline run twice → identical output
-├── docs/
-│   ├── ADR.md                  # Three architecture decisions, one page
-│   └── architecture.png        # System diagram (8 components)
 ├── notebooks/
 │   └── cost_projection.py      # 30-day cost divergence chart
-├── .github/
-│   └── workflows/test.yml      # CI: pyspark + delta-spark + pytest on push
-├── README.md
-└── CLAUDE.md
+└── docs/
+    └── ADR.md                  # Three architecture decisions, one page
+
+robust_etl_ecomm/               # dbt project (profile: robust_etl_ecomm)
+├── models/silver/
+│   └── orders_cleaned.sql      # Incremental merge on order_id
+├── models/gold/
+│   └── daily_revenue.sql       # Daily revenue aggregation
+└── dbt_project.yml
+
+scripts/                        # Ops / admin scripts (not pipeline code)
+└── databricks_force_sync.sh    # Force-sync Databricks workspace repo from GitHub
+
+docs/                           # MkDocs site source (mkdocs serve to preview)
+├── components/                 # Per-component deep-dives
+├── reference/                  # ADR, catalog layout, schema config
+└── architecture.md             # System diagram
+
+.github/
+└── workflows/test.yml          # CI: pyspark + delta-spark + pytest on push
+mkdocs.yml                      # MkDocs Material theme config
 ```
 
 ---
@@ -91,12 +103,12 @@ Runs at the ingestion boundary. Compares incoming schema against `config/schema_
 | Change | Verdict | Consequence |
 |---|---|---|
 | New column added | `NON_BREAKING` | Log to `schema_change_log`, pipeline continues |
-| Required column removed | `BREAKING` | Log to `incident_log` with `affected_pipelines`, raise exception, zero rows written |
+| Required column removed | `BREAKING` | Log to `incident_log` with `affected_pipelines`, raise `SchemaBreakingChangeError`, zero rows written |
 | Column type changed | `BREAKING` | Same |
 
 The sentinel is stateless by design — it reads config, compares, routes. No internal state. Each invocation is independent. This is documented in the code with an explicit comment because the design choice matters for horizontal scaling.
 
-To test the two scenarios:
+To test the two scenarios (run from `reliability_engine/`):
 
 ```bash
 # Non-breaking
@@ -107,7 +119,7 @@ python scripts/ingest_bronze.py
 # Breaking
 cp config/schema_v3.json config/schema_config.json
 python scripts/ingest_bronze.py
-# incident_log → PIPELINE_HALTED, affected_pipelines populated, Bronze row count unchanged
+# incident_log → PIPELINE_HALTED, SchemaBreakingChangeError raised, Bronze row count unchanged
 
 # Reset
 cp config/schema_v1.json config/schema_config.json
@@ -121,13 +133,16 @@ cp config/schema_v1.json config/schema_config.json
 
 The question this module answers: *what does it actually cost to reprocess everything versus processing only what changed?*
 
-**dbt models:**
+**dbt models** (run from `robust_etl_ecomm/`):
 - `silver/orders_cleaned` — incremental, `unique_key='order_id'`, `updated_at` watermark, merge strategy
-- `gold/daily_revenue` — incremental aggregation
+- `gold/daily_revenue` — incremental aggregation; columns: `order_date`, `total_orders`, `gross_revenue`, `avg_order_value`, `delivered_orders`, `cancelled_orders`
+
+Both models use `on_schema_change='fail'` — dbt will error rather than silently drift.
 
 Run sequence:
 
 ```bash
+cd robust_etl_ecomm
 dbt run --full-refresh   # baseline: full reprocessing cost
 dbt run                  # incremental: cost at steady state
 ```
@@ -183,7 +198,7 @@ Structured logging throughout `ingest_bronze.py`. No silent failures.
 
 ## Tests and CI
 
-**Idempotency** (`tests/test_idempotency.py`):
+**Idempotency** (`reliability_engine/tests/test_idempotency.py`):
 - Run incremental pipeline twice on identical input
 - Assert row count is identical on both runs
 - Assert no duplicate `order_id` values
@@ -200,9 +215,11 @@ pytest tests/
 
 ## dbt setup
 
+The dbt project is `robust_etl_ecomm/`. Profile name must match `dbt_project.yml`.
+
 ```yaml
 # ~/.dbt/profiles.yml
-reliability_engine:
+robust_etl_ecomm:
   target: dev
   outputs:
     dev:
@@ -215,7 +232,41 @@ reliability_engine:
 
 HTTP path: SQL Warehouses → Starter Warehouse → Connection Details.
 
-Run `dbt debug` before `dbt run`. Fix any connection issues before touching models.
+Run `dbt debug` from `robust_etl_ecomm/` before `dbt run`. Fix any connection issues before touching models.
+
+---
+
+## Ops scripts
+
+`scripts/` at the repo root holds admin and ops utilities — not pipeline code.
+
+| Script | Purpose |
+|---|---|
+| `databricks_force_sync.sh` | Force-syncs the Databricks workspace repo to GitHub. Tries a normal pull first; on conflict, deletes and re-clones. Workspace-only edits will be lost. |
+
+```bash
+# Default: syncs /Users/c.voranipit@gmail.com/robust-databricks to main
+./scripts/databricks_force_sync.sh
+
+# Override branch or workspace path
+./scripts/databricks_force_sync.sh --branch feature/my-branch
+./scripts/databricks_force_sync.sh --path /Users/other@email.com/robust-databricks
+```
+
+Requires the Databricks CLI authenticated (`databricks auth login`).
+
+---
+
+## Docs site
+
+Source: `docs/` — built with MkDocs Material.
+
+```bash
+mkdocs serve    # preview at localhost:8000
+mkdocs build    # output to site/
+```
+
+`site/` is a build artifact — do not commit it.
 
 ---
 
@@ -235,7 +286,7 @@ These are deferred, not missing. v1 solves the detection and governance layer. A
 
 ## Architecture decisions
 
-Full reasoning in `docs/ADR.md`. Summary:
+Full reasoning in `reliability_engine/docs/ADR.md`. Summary:
 
 1. **Delta over Parquet** — ACID transactions, schema enforcement, and time travel for incident replay.
 2. **Detection at ingestion boundary** — corrupt or incompatible data never enters the warehouse. Catching it at transformation means it already landed somewhere.

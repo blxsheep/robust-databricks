@@ -14,11 +14,12 @@ The ingestion script validates incoming data via the Schema Sentinel, attaches a
 generate_orders(500)
       │
       ▼
-_df_to_schema_dict(df)       ← normalize Spark types to schema_config types
+_df_to_schema_dict(df)        ← extract raw Spark types from DataFrame schema
       │
       ▼
-sentinel_run(incoming_schema) ← raises RuntimeError on BREAKING change
-      │
+sentinel_run(incoming_schema) ← pre-ingestion validation; raises SchemaBreakingChangeError
+      │                          on BREAKING change (no data written). Infrastructure
+      │                          failures (FileNotFoundError, JSONDecodeError) propagate as-is.
       ▼
 df.withColumn(...)            ← attach _ingested_at, _schema_version, _source
       │
@@ -51,17 +52,9 @@ These columns enable:
 
 ## Type normalization
 
-Spark and `schema_config.json` use slightly different type names. The ingestion layer normalizes before passing to the sentinel:
+Spark and `schema_config.json` use slightly different type names (e.g. `"int"` vs `"integer"`). Normalization is owned entirely by `schema_sentinel.py` via its `_normalize_type()` function and `_TYPE_ALIASES` map. `ingest_bronze.py` passes raw Spark type strings — the sentinel resolves aliases on both sides before comparing.
 
-```python
-_SPARK_TYPE_MAP = {
-    "int":    "integer",
-    "bigint": "long",
-    "float":  "float",
-}
-```
-
-Without this, `integer` columns would always appear as a type mismatch.
+This keeps the single source of truth for type aliases in the sentinel, not split across two files.
 
 ---
 
@@ -104,7 +97,9 @@ df = spark.read.format("csv").option("header", True).load("your_data.csv")
 rows_written = ingest(df)
 ```
 
-`ingest()` returns the number of rows written, or raises `RuntimeError` on a BREAKING schema change.
+`ingest()` returns the number of rows written.
+
+Raises `SchemaBreakingChangeError` on a BREAKING schema change (removed column or type change). Raises `FileNotFoundError` or `json.JSONDecodeError` on infrastructure failures. Callers can catch these separately.
 
 ---
 

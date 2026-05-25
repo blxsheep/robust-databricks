@@ -19,10 +19,22 @@ This matters for horizontal scaling: multiple ingestion jobs can run concurrentl
 | Change | Verdict | Consequence |
 |---|---|---|
 | New column added | `NON_BREAKING` | Log to `schema_change_log`, pipeline continues |
-| Required column removed | `BREAKING` | Log to `incident_log`, `RuntimeError` raised, zero rows written |
+| Required column removed | `BREAKING` | Log to `incident_log`, `SchemaBreakingChangeError` raised, zero rows written |
 | Column type changed | `BREAKING` | Same as above |
+| Any other verdict | — | `ValueError` raised — indicates a bug in `classify()`, not a schema event |
 
 Adding columns is always safe — downstream consumers ignore unknown columns. Removing or changing a required column breaks every consumer silently if not caught.
+
+Type comparison uses normalized canonical names before classifying. Spark and schema_config.json use slightly different aliases for the same types — without normalization, `"int"` vs `"integer"` would fire a false `BREAKING` verdict.
+
+| Alias | Canonical | Note |
+|---|---|---|
+| `int` | `integer` | |
+| `long`, `bigint` | `integer` | PySpark infers Python `int` as `LongType` by default — widening is non-breaking |
+| `float` | `double` | |
+| `bool` | `boolean` | |
+| `str`, `varchar` | `string` | |
+| `timestamp_ntz` | `timestamp` | |
 
 ---
 
@@ -34,21 +46,23 @@ Adding columns is always safe — downstream consumers ignore unknown columns. R
 def load_expected_schema(config_path: Path = CONFIG_PATH) -> dict[str, str]:
     with open(config_path) as f:
         config = json.load(f)
-    return {col["name"]: col["type"] for col in config["columns"]}
+    return {col["name"]: _normalize_type(col["type"]) for col in config["columns"]}
 ```
 
-Returns `{column_name: type}` from the active `schema_config.json`.
+Returns `{column_name: normalized_type}` from the active `schema_config.json`. Raises `FileNotFoundError` if the config is missing or `json.JSONDecodeError` if malformed — these are infrastructure failures and propagate as-is, not as schema errors.
 
 ### 2. Classify the incoming schema
 
 ```python
 def classify(incoming_schema: dict[str, str], expected_schema: dict[str, str]) -> SentinelResult:
-    added   = [c for c in incoming_schema if c not in expected_schema]
-    removed = [c for c in expected_schema if c not in incoming_schema]
+    normalized_incoming = {c: _normalize_type(t) for c, t in incoming_schema.items()}
+
+    added   = [c for c in normalized_incoming if c not in expected_schema]
+    removed = [c for c in expected_schema if c not in normalized_incoming]
     type_changes = [
-        {"column": c, "expected": expected_schema[c], "actual": incoming_schema[c]}
-        for c in incoming_schema
-        if c in expected_schema and incoming_schema[c] != expected_schema[c]
+        {"column": c, "expected": expected_schema[c], "actual": normalized_incoming[c]}
+        for c in normalized_incoming
+        if c in expected_schema and normalized_incoming[c] != expected_schema[c]
     ]
 
     is_breaking = bool(removed or type_changes)
@@ -57,12 +71,15 @@ def classify(incoming_schema: dict[str, str], expected_schema: dict[str, str]) -
     ...
 ```
 
+Both sides are normalized before comparison — Spark type aliases are resolved to canonical names first.
+
 ### 3. Route and log
 
-- **NON_BREAKING** → appends to `reliability_engine.observability.schema_change_log`, returns `SentinelResult`
-- **BREAKING** → appends to `reliability_engine.observability.incident_log` with `event: PIPELINE_HALTED`, raises `RuntimeError`
+- **NON_BREAKING** → logs `WARNING`, appends to `reliability_engine.observability.schema_change_log`, returns `SentinelResult`
+- **BREAKING** → logs `WARNING`, appends to `reliability_engine.observability.incident_log` with `event: PIPELINE_HALTED`, raises `SchemaBreakingChangeError`
+- **Unexpected verdict** → raises `ValueError` — this is a code bug, not a schema event
 
-The `RuntimeError` propagates up through `ingest_bronze.py`, stopping the write. Zero rows reach Bronze.
+`SchemaBreakingChangeError` propagates up through `ingest_bronze.py`, stopping the write before any data touches Bronze. Both `SchemaBreakingChangeError` and infrastructure errors (`FileNotFoundError`, `JSONDecodeError`) can be caught separately by callers.
 
 ---
 
@@ -111,8 +128,9 @@ class SentinelResult:
 The sentinel can run without a Spark session (no UC writes, logs printed only):
 
 ```python
-from schema_sentinel import run
+from schema_sentinel import SchemaBreakingChangeError, run
 
+# Non-breaking: new column added
 sample_incoming = {
     "order_id": "string", "customer_id": "string", "product_id": "string",
     "quantity": "integer", "unit_price": "double", "status": "string",
@@ -121,6 +139,14 @@ sample_incoming = {
 }
 result = run(sample_incoming, spark=None)
 print(result.verdict)  # NON_BREAKING
+
+# Breaking: column removed
+try:
+    run({"order_id": "string"}, spark=None)  # missing required columns
+except SchemaBreakingChangeError as e:
+    print(f"Schema change: {e}")
+except FileNotFoundError:
+    print("Config missing — infrastructure issue, not a schema change")
 ```
 
 Or run the file directly:

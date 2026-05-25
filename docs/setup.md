@@ -149,7 +149,7 @@ The sentinel reads `config/schema_config.json` at ingestion time. Swap the activ
     cp reliability_engine/config/schema_v3.json reliability_engine/config/schema_config.json
     python reliability_engine/scripts/ingest_bronze.py
     # → observability.incident_log gets PIPELINE_HALTED
-    # → RuntimeError raised, zero rows written to Bronze
+    # → SchemaBreakingChangeError raised, zero rows written to Bronze
     ```
 
 === "Reset to baseline"

@@ -13,13 +13,17 @@ Each invocation is independent, enabling horizontal scaling.
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "schema_config.json"
+
+
+class SchemaBreakingChangeError(Exception):
+    """Raised when an incoming schema has a breaking change (removed column or type change)."""
 
 SCHEMA_CHANGE_LOG = "reliability_engine.observability.schema_change_log"
 INCIDENT_LOG      = "reliability_engine.observability.incident_log"
@@ -34,11 +38,32 @@ class SentinelResult:
     affected_pipelines: list[str] = field(default_factory=list)
 
 
+# Spark/Databricks type aliases that are semantically equivalent.
+# Without this, "integer" vs "int" would be misclassified as a BREAKING type change.
+_TYPE_ALIASES: dict[str, str] = {
+    "int":        "integer",
+    "long":       "bigint",
+    "float":      "double",
+    "bool":       "boolean",
+    "str":        "string",
+    "varchar":    "string",
+    "timestamp_ntz": "timestamp",
+}
+
+
+def _normalize_type(t: str) -> str:
+    return _TYPE_ALIASES.get(t.lower(), t.lower())
+
+
 def load_expected_schema(config_path: Path = CONFIG_PATH) -> dict[str, str]:
-    """Returns {column_name: type} from the active schema_config.json."""
+    """Returns {column_name: normalized_type} from the active schema_config.json.
+
+    Raises FileNotFoundError if config is missing, json.JSONDecodeError if malformed.
+    These are infrastructure failures — callers should not catch them as schema changes.
+    """
     with open(config_path) as f:
         config = json.load(f)
-    return {col["name"]: col["type"] for col in config["columns"]}
+    return {col["name"]: _normalize_type(col["type"]) for col in config["columns"]}
 
 
 def classify(incoming_schema: dict[str, str], expected_schema: dict[str, str]) -> SentinelResult:
@@ -49,14 +74,16 @@ def classify(incoming_schema: dict[str, str], expected_schema: dict[str, str]) -
     Rules:
       - New column added          → NON_BREAKING
       - Required column removed   → BREAKING
-      - Column type changed       → BREAKING
+      - Column type changed       → BREAKING (after type alias normalization)
     """
-    added   = [c for c in incoming_schema if c not in expected_schema]
-    removed = [c for c in expected_schema if c not in incoming_schema]
+    normalized_incoming = {c: _normalize_type(t) for c, t in incoming_schema.items()}
+
+    added   = [c for c in normalized_incoming if c not in expected_schema]
+    removed = [c for c in expected_schema if c not in normalized_incoming]
     type_changes = [
-        {"column": c, "expected": expected_schema[c], "actual": incoming_schema[c]}
-        for c in incoming_schema
-        if c in expected_schema and incoming_schema[c] != expected_schema[c]
+        {"column": c, "expected": expected_schema[c], "actual": normalized_incoming[c]}
+        for c in normalized_incoming
+        if c in expected_schema and normalized_incoming[c] != expected_schema[c]
     ]
 
     is_breaking = bool(removed or type_changes)
@@ -84,7 +111,7 @@ def run(incoming_schema: dict[str, str], spark=None) -> SentinelResult:
     result = classify(incoming_schema, expected)
 
     log_entry = {
-        "evaluated_at":       datetime.utcnow().isoformat(),
+        "evaluated_at":       datetime.now(timezone.utc).isoformat(),
         "verdict":            result.verdict,
         "added_columns":      str(result.added_columns),
         "removed_columns":    str(result.removed_columns),
@@ -93,19 +120,22 @@ def run(incoming_schema: dict[str, str], spark=None) -> SentinelResult:
     }
 
     if result.verdict == "NON_BREAKING":
-        logger.info("Schema sentinel: NON_BREAKING — pipeline continues. added=%s", result.added_columns)
+        logger.warning("Schema sentinel: NON_BREAKING — pipeline continues. added=%s", result.added_columns)
         _append_log(spark, SCHEMA_CHANGE_LOG, log_entry)
 
-    else:
-        logger.error(
+    elif result.verdict == "BREAKING":
+        logger.warning(
             "Schema sentinel: BREAKING — pipeline halted. removed=%s type_changes=%s",
             result.removed_columns, result.type_changes,
         )
         _append_log(spark, INCIDENT_LOG, {**log_entry, "event": "PIPELINE_HALTED"})
-        raise RuntimeError(
+        raise SchemaBreakingChangeError(
             f"BREAKING schema change detected. Removed: {result.removed_columns}. "
             f"Type changes: {result.type_changes}. Affected: {result.affected_pipelines}"
         )
+
+    else:
+        raise ValueError(f"Schema sentinel returned unexpected verdict: {result.verdict!r}")
 
     return result
 

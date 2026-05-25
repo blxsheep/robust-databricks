@@ -14,11 +14,11 @@ Run directly to generate + ingest 500 synthetic orders:
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pyspark.sql import SparkSession, functions as F
-from schema_sentinel import run as sentinel_run
+from schema_sentinel import SchemaBreakingChangeError, run as sentinel_run
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -34,42 +34,41 @@ TARGET_TABLE = "reliability_engine.bronze.raw_orders"
 COST_LOG     = "reliability_engine.observability.cost_attribution_log"
 PIPELINE_ID  = "ingest_bronze_v1"
 
-# Spark returns "int" for IntegerType — normalize to match schema_config.json types
-_SPARK_TYPE_MAP = {
-    "int":    "integer",
-    "bigint": "long",
-    "float":  "float",
-}
-
-
 def _schema_version() -> str:
     with open(CONFIG_PATH) as f:
         return json.load(f).get("version", "unknown")
 
 
 def _df_to_schema_dict(df) -> dict[str, str]:
-    """Returns {column_name: normalized_type} from a Spark DataFrame."""
-    return {
-        f.name: _SPARK_TYPE_MAP.get(f.dataType.simpleString(), f.dataType.simpleString())
-        for f in df.schema.fields
-    }
+    """Returns {column_name: raw_spark_type} from a Spark DataFrame.
+
+    Type normalization (e.g. "int" → "integer") is handled by schema_sentinel,
+    which owns the canonical type alias map.
+    """
+    return {f.name: f.dataType.simpleString() for f in df.schema.fields}
 
 
 def ingest(df) -> int:
     """
-    Validates schema, attaches metadata columns, writes to Bronze.
-    Raises RuntimeError if sentinel detects a BREAKING schema change.
+    Validates schema before ingestion, then attaches metadata columns and writes to Bronze.
+
+    Raises:
+        SchemaBreakingChangeError: incoming schema has a removed column or type change.
+        FileNotFoundError: schema_config.json is missing (infrastructure failure).
+        json.JSONDecodeError: schema_config.json is malformed (infrastructure failure).
     Returns the number of rows written.
     """
-    start = datetime.utcnow()
+    start = datetime.now(timezone.utc)
 
-    # 1. Schema validation — raises RuntimeError on BREAKING change
+    # 1. Pre-ingestion schema validation — no data is written if this raises.
+    #    SchemaBreakingChangeError → genuine schema change, logged to incident_log.
+    #    FileNotFoundError / JSONDecodeError → infrastructure failure, propagates as-is.
     incoming_schema = _df_to_schema_dict(df)
     sentinel_run(incoming_schema, spark=spark)
 
     # 2. Attach system metadata columns
     schema_ver  = _schema_version()
-    ingested_at = datetime.utcnow()
+    ingested_at = datetime.now(timezone.utc)
 
     df_enriched = (
         df
@@ -80,7 +79,7 @@ def ingest(df) -> int:
     df_enriched.write.format("delta").mode("append").saveAsTable(TARGET_TABLE)
 
     rows_written = df_enriched.count()
-    runtime      = (datetime.utcnow() - start).total_seconds()
+    runtime      = (datetime.now(timezone.utc) - start).total_seconds()
 
     logger.info(
         "Ingestion complete. rows=%d runtime=%.2fs schema_version=%s",
@@ -103,7 +102,7 @@ def _log_cost(runtime_seconds: float, rows_processed: int, run_type: str):
         "rows_processed":     rows_processed,
         "estimated_dbu":      round(estimated_dbu, 6),
         "estimated_cost_usd": round(estimated_dbu * DBU_RATE_USD, 6),
-        "logged_at":          datetime.utcnow().isoformat(),
+        "logged_at":          datetime.now(timezone.utc).isoformat(),
         "methodology":        "DBU proxy $0.22/DBU. Free Edition serverless. In prod: use system.billing.usage",
     }
     spark.createDataFrame([entry]).write.format("delta").mode("append").saveAsTable(COST_LOG)

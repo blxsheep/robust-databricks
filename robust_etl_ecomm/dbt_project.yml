@@ -33,7 +33,9 @@ models:
   robust_etl_ecomm:
     silver:
       +materialized: incremental
+      +database: reliability_engine
       +schema: silver
     gold:
       +materialized: incremental
+      +database: reliability_engine
       +schema: gold

@@ -99,6 +99,32 @@ Unique key is `order_date` — each date has exactly one row, updated on every r
 
 ---
 
+## Schema naming — why `macros/generate_schema_name.sql` exists
+
+dbt's default behavior concatenates the profile's target schema with any `+schema` override set in `dbt_project.yml`:
+
+```
+result = {target.schema}_{custom_schema}
+```
+
+With `schema: silver` in the profile and `+schema: silver` / `+schema: gold` in `dbt_project.yml`, this produces `silver_silver` and `silver_gold` — not what we want.
+
+The macro overrides that logic to use the custom schema name as-is:
+
+```sql
+{% macro generate_schema_name(custom_schema_name, node) -%}
+    {%- if custom_schema_name is none -%}
+        {{ target.schema }}
+    {%- else -%}
+        {{ custom_schema_name | trim }}
+    {%- endif -%}
+{%- endmacro %}
+```
+
+This is the [dbt-recommended approach](https://docs.getdbt.com/docs/build/custom-schemas#an-alternative-pattern-for-generating-schema-names) for controlling schema names explicitly. Without it, the only alternative is removing `+schema` overrides entirely and living with a single schema for all models.
+
+---
+
 ## Running the models
 
 ```bash

@@ -20,7 +20,11 @@ logger = logging.getLogger(__name__)
 
 spark = SparkSession.builder.getOrCreate()
 
-CONFIG_PATH  = Path(__file__).parent.parent / "config" / "sla_config.json"
+try:
+    CONFIG_PATH = Path(__file__).parent.parent / "config" / "sla_config.json"
+except NameError:
+    # Running in notebook/REPL where __file__ is not defined
+    CONFIG_PATH = Path("/Workspace/Users/c.voranipit@gmail.com/robust-databricks/reliability_engine/config/sla_config.json")
 BRONZE_TABLE = "reliability_engine.bronze.raw_orders"
 SLA_LOG      = "reliability_engine.observability.sla_check_log"
 

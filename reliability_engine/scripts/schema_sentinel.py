@@ -19,7 +19,11 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(__file__).parent.parent / "config" / "schema_config.json"
+try:
+    CONFIG_PATH = Path(__file__).parent.parent / "config" / "schema_config.json"
+except NameError:
+    # Running in notebook/REPL where __file__ is not defined
+    CONFIG_PATH = Path("/Workspace/Users/c.voranipit@gmail.com/robust-databricks/reliability_engine/config/schema_config.json")
 
 
 class SchemaBreakingChangeError(Exception):

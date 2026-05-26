@@ -57,11 +57,11 @@ Set it as a bundle variable override or export before deploying:
 
 ```bash
 # Option 1 — override at deploy time
-databricks bundle deploy --var="warehouse_id=abc123def456"
+databricks bundle deploy --var="warehouse_id=e7d27934b2137b5b"
 
-# Option 2 — set it in databricks.yml under the dev target variables block
+# Option 2 — pin it in databricks.yml under the dev target variables block
 variables:
-  warehouse_id: abc123def456
+  warehouse_id: e7d27934b2137b5b
 ```
 
 ---

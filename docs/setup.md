@@ -73,47 +73,51 @@ Fix any connection issues before running models.
 
 ---
 
-## Step 4 — Run the ingestion pipeline
+## Step 4 — Deploy the pipeline via Asset Bundle
 
-The scripts run on Databricks (in a Job, notebook, or via `databricks-connect`). Run from `reliability_engine/scripts/`:
+The pipeline is orchestrated as a Databricks Asset Bundle (DAB). One deploy replaces all manual notebook steps.
 
 ```bash
-# Generate 500 synthetic orders and ingest into Bronze
+# Validate the bundle config
+databricks bundle validate
+
+# Deploy to dev (job schedule is paused)
+databricks bundle deploy --target dev --var="warehouse_id=<your-warehouse-id>"
+
+# Trigger a manual run
+databricks bundle run reliability_pipeline --target dev
+```
+
+The job runs all four tasks in order: `generate_data → ingest_bronze → dbt_run → sla_check`.
+
+See [Deployment (DAB)](deployment.md) for full instructions including how to find your warehouse ID and set up auth.
+
+---
+
+## Running steps manually (without the bundle)
+
+If you want to run individual steps outside the job:
+
+**Ingestion:**
+
+```bash
+# From reliability_engine/scripts/
 python ingest_bronze.py
 ```
 
-This will:
-
-1. Generate synthetic e-commerce orders via `generate_data.py`
-2. Run the Schema Sentinel against `config/schema_config.json`
-3. Write enriched rows to `reliability_engine.bronze.raw_orders`
-4. Append a cost attribution row to `observability.cost_attribution_log`
-
----
-
-## Step 5 — Run dbt transforms
+**dbt transforms:**
 
 ```bash
 cd robust_etl_ecomm
-
-# First run — full refresh to establish baseline
-dbt run --full-refresh
-
-# Subsequent runs — incremental only
-dbt run
+dbt run --full-refresh   # baseline
+dbt run                  # incremental
 ```
 
-Record the runtime of each run. These are the inputs for the cost projection notebook.
-
----
-
-## Step 6 — Run SLA checks
+**SLA checks:**
 
 ```bash
 python reliability_engine/scripts/sla_monitor.py
 ```
-
-Results append to `observability.sla_check_log`. Each check includes a `business_impact` label.
 
 ---
 

@@ -1,0 +1,38 @@
+bundle:
+  name: robust-databricks
+
+include:
+  - resources/*.yml
+
+# Workspace paths for notebooks are pinned to the git-synced repo location.
+# If your repo is synced elsewhere, update workspace_repo_path in each target.
+variables:
+  workspace_repo_path:
+    description: Absolute workspace path to the cloned repo root
+    default: /Workspace/Users/c.voranipit@gmail.com/robust-databricks
+  warehouse_id:
+    description: SQL warehouse ID used by the dbt_task (Starter Warehouse → Connection Details → ID)
+    default: ""
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-970ed03d-67bd.cloud.databricks.com
+      profile: DEFAULT
+      root_path: /Workspace/Users/c.voranipit@gmail.com/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      workspace_repo_path: /Workspace/Users/c.voranipit@gmail.com/robust-databricks
+
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-970ed03d-67bd.cloud.databricks.com
+      profile: DEFAULT
+      root_path: /Workspace/Users/c.voranipit@gmail.com/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      workspace_repo_path: /Workspace/Users/c.voranipit@gmail.com/robust-databricks
+    permissions:
+      - user_name: c.voranipit@gmail.com
+        level: CAN_MANAGE

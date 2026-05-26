@@ -49,6 +49,7 @@ nav:
       - SLA Monitor: components/sla-monitor.md
       - Cost Governance: components/cost-governance.md
   - Git & Databricks: git-databricks.md
+  - Deployment (DAB): deployment.md
   - Testing: testing.md
   - Reference:
       - Schema Config: reference/schema-config.md

@@ -58,6 +58,10 @@ robust_etl_ecomm/               # dbt project (profile: robust_etl_ecomm)
 │   └── daily_revenue.sql       # Daily revenue aggregation
 └── dbt_project.yml
 
+databricks.yml                  # DAB bundle root — targets, auth profile, variables
+resources/
+└── reliability_pipeline.job.yml  # 4-task job DAG (generate → ingest → dbt → sla)
+
 scripts/                        # Ops / admin scripts (not pipeline code)
 └── databricks_force_sync.sh    # Force-sync Databricks workspace repo from GitHub
 
@@ -196,6 +200,52 @@ Structured logging throughout `ingest_bronze.py`. No silent failures.
 
 ---
 
+## Orchestration — Databricks Asset Bundle
+
+`databricks.yml` + `resources/reliability_pipeline.job.yml`
+
+The pipeline deploys as a Databricks Job via DAB. The job defines a 4-task DAG with explicit `depends_on` edges:
+
+```
+generate_data → ingest_bronze → dbt_run → sla_check
+```
+
+A failure at `ingest_bronze` (e.g. breaking schema change) automatically prevents `dbt_run` and `sla_check` from running.
+
+**Deploy and run:**
+
+```bash
+# Validate locally — no workspace calls
+databricks bundle validate
+
+# Deploy to dev (schedule paused)
+databricks bundle deploy --target dev --var="warehouse_id=<starter-warehouse-id>"
+
+# Trigger a manual run
+databricks bundle run reliability_pipeline --target dev
+```
+
+**Auth:** uses `~/.databrickscfg` profile `DEFAULT`. Run `databricks auth login` to set it up.
+
+**warehouse_id** is required for the `dbt_task`. Find it at: SQL Warehouses → Starter Warehouse → Connection Details → HTTP path (last segment).
+
+**Targets:**
+
+| Target | Mode | Schedule |
+|---|---|---|
+| `dev` | development (resources prefixed `[dev ...]`) | PAUSED |
+| `prod` | production | Every 6 hours (UTC) |
+
+**Tear down:**
+
+```bash
+databricks bundle destroy --target dev
+```
+
+Full deployment docs: `docs/deployment.md`.
+
+---
+
 ## Tests and CI
 
 **Idempotency** (`reliability_engine/tests/test_idempotency.py`):
@@ -210,6 +260,41 @@ pytest tests/
 **CI** (`.github/workflows/test.yml`):
 - Trigger: push to any branch
 - Steps: install `pyspark`, `delta-spark`, `pytest` → run `pytest tests/`
+
+**Local prerequisites — Java 17 required:**
+
+PySpark 3.5 is incompatible with Java 21+. The system default on this machine is Java 25 (Homebrew `openjdk`), which causes `JAVA_GATEWAY_EXITED` at test startup.
+
+Install Java 17 if not present:
+
+```bash
+brew install openjdk@17
+```
+
+Run tests with Java 17 explicitly:
+
+```bash
+JAVA_HOME=/opt/homebrew/opt/openjdk@17 poetry run pytest -v
+```
+
+Or set it permanently in `~/.zshrc` so `poetry run pytest` works without the prefix:
+
+```bash
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17
+```
+
+**Notebook `__file__` compatibility:**
+
+`__file__` is undefined in Databricks notebooks and the REPL. All scripts that resolve config paths use a `try/except NameError` fallback to an absolute workspace path:
+
+```python
+try:
+    CONFIG_PATH = Path(__file__).parent.parent / "config" / "schema_config.json"
+except NameError:
+    CONFIG_PATH = Path("/Workspace/Users/c.voranipit@gmail.com/robust-databricks/reliability_engine/config/schema_config.json")
+```
+
+This pattern is applied in `ingest_bronze.py`, `schema_sentinel.py`, and `sla_monitor.py`.
 
 ---
 

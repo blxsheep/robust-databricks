@@ -66,11 +66,32 @@ Three orders, each with a unique `order_id`. After two merges, still three rows,
 
 ### Run locally
 
-Tests use PySpark + delta-spark in local mode — no Databricks connection required:
+Tests use PySpark + delta-spark in local mode — no Databricks connection required.
+
+**Java 17 is required.** PySpark 3.5 is incompatible with Java 21+. Running against Java 25 (the current Homebrew default) causes `JAVA_GATEWAY_EXITED` at test startup.
+
+Install Java 17 if not present:
 
 ```bash
-pip install pyspark delta-spark pytest
-pytest reliability_engine/tests/
+brew install openjdk@17
+```
+
+Run with Poetry (recommended):
+
+```bash
+JAVA_HOME=/opt/homebrew/opt/openjdk@17 poetry run pytest -v
+```
+
+To avoid passing `JAVA_HOME` every time, add to `~/.zshrc`:
+
+```bash
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17
+```
+
+Then just:
+
+```bash
+poetry run pytest
 ```
 
 ---
@@ -100,6 +121,8 @@ python reliability_engine/scripts/schema_sentinel.py
 ```
 
 Runs a NON_BREAKING classification against `schema_v2` schema (adds `delivery_partner`). Prints the verdict and skips UC writes since no Spark session is available.
+
+**Note:** `__file__` is undefined in Databricks notebooks and the REPL. All scripts that resolve config paths use a `try/except NameError` fallback to an absolute workspace path. This is applied in `ingest_bronze.py`, `schema_sentinel.py`, and `sla_monitor.py` — no action needed when running locally via the CLI.
 
 ---
 

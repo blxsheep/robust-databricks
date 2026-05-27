@@ -1,3 +1,5 @@
+# Databricks notebook source
+
 """
 ingest_bronze.py
 Ingestion pipeline: validates schema via sentinel, then writes to

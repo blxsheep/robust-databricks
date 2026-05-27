@@ -1,3 +1,5 @@
+# Databricks notebook source
+
 """
 sla_monitor.py
 Runs three SLA checks against the Bronze table and appends results

@@ -1,3 +1,5 @@
+# Databricks notebook source
+
 """
 generate_data.py
 Generates synthetic e-commerce order data and writes it to

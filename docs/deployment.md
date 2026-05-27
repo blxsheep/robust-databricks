@@ -24,6 +24,8 @@ Each arrow is an explicit `depends_on` — Databricks will not start a downstrea
 
 ## Prerequisites
 
+### 1. Databricks CLI
+
 Install the Databricks CLI (v0.200+):
 
 ```bash
@@ -42,6 +44,26 @@ This writes a `DEFAULT` profile to `~/.databrickscfg`. Verify:
 ```bash
 databricks auth env --profile DEFAULT
 ```
+
+### 2. Workspace Git folder (one-time setup)
+
+The notebook tasks reference scripts via `source: WORKSPACE`. This requires the repo to be cloned as a Git folder inside the Databricks workspace.
+
+**In the Databricks UI:**
+
+1. Open the workspace sidebar → **Workspace**
+2. Navigate to `/Workspace/Users/c.voranipit@gmail.com/`
+3. Click **Create** → **Git folder**
+4. Paste the GitHub repo URL
+5. Confirm the folder name is `robust-databricks` (final path: `/Workspace/Users/c.voranipit@gmail.com/robust-databricks`)
+
+After setup, keep the Git folder in sync with the `scripts/databricks_force_sync.sh` script or by pulling from the Repos UI before each deployment:
+
+```bash
+./scripts/databricks_force_sync.sh
+```
+
+**Why this is required:** `notebook_task` with `source: WORKSPACE` looks up the path at runtime. The DAB deploys the job definition but does not upload the notebook files — they must already exist in the workspace via the Git folder.
 
 ---
 

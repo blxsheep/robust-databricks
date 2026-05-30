@@ -1,13 +1,14 @@
-name: CI
+name: CI / Deploy
 
 on:
   push:
     branches: ["**"]
 
 jobs:
+  # ── Job 1: Unit + integration tests ──────────────────────────────────────
   test:
+    name: Test
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -34,3 +35,59 @@ jobs:
 
       - name: Run tests
         run: poetry run pytest -v
+
+  # ── Job 2: Bundle dry run (validate only, no deploy) ─────────────────────
+  validate:
+    name: Bundle validate (dry run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Validate bundle
+        run: databricks bundle validate
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+  # ── Job 3: Deploy — only on main, only if test + validate both pass ───────
+  deploy:
+    name: Deploy to dev
+    runs-on: ubuntu-latest
+    needs: [test, validate]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Deploy bundle
+        run: databricks bundle deploy --target dev
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+      - name: Sync workspace Git folder
+        run: |
+          RAW=$(databricks workspace get-status \
+            "/Workspace/Users/c.voranipit@gmail.com/robust-databricks" \
+            --output json 2>/dev/null || true)
+          REPO_ID=$(echo "$RAW" | python3 -c "
+          import sys, json
+          raw = sys.stdin.read().strip()
+          if raw:
+              print(json.loads(raw).get('object_id', ''))
+          " 2>/dev/null || true)
+          if [[ -n "$REPO_ID" ]]; then
+            databricks repos update "$REPO_ID" --branch main
+            echo "Synced workspace Git folder to main (ID: $REPO_ID)"
+          else
+            echo "Warning: workspace Git folder not found. Create it once via Databricks UI."
+            exit 1
+          fi
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}

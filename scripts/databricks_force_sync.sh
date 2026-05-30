@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-REPO_PATH="/Users/c.voranipit@gmail.com/robust-databricks"
+REPO_PATH="/Workspace/Users/c.voranipit@gmail.com/robust-databricks"
 REPO_URL="https://github.com/blxsheep/robust-databricks.git"
 REPO_PROVIDER="github"
 BRANCH="main"
@@ -25,8 +25,14 @@ done
 
 echo "==> Resolving repo at: $REPO_PATH"
 
-# Get repo ID from workspace path
-REPO_ID=$(databricks workspace get-status "$REPO_PATH" --output json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['object_id'])")
+# Get repo ID from workspace path — empty/missing path returns "" cleanly
+_RAW=$(databricks workspace get-status "$REPO_PATH" --output json 2>/dev/null || true)
+REPO_ID=$(echo "$_RAW" | python3 -c "
+import sys, json
+raw = sys.stdin.read().strip()
+if raw:
+    print(json.loads(raw).get('object_id', ''))
+" 2>/dev/null || true)
 
 if [[ -z "$REPO_ID" ]]; then
   echo "    Repo not found at path — cloning fresh from GitHub."

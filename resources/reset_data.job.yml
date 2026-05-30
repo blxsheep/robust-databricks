@@ -1,0 +1,10 @@
+resources:
+  jobs:
+    reset_data:
+      name: "Reliability Pipeline — Reset"
+      tasks:
+        - task_key: reset_data
+          description: "Truncates all pipeline tables. Run before each demo to start clean."
+          notebook_task:
+            notebook_path: ${var.workspace_repo_path}/reliability_engine/scripts/reset_data
+            source: WORKSPACE

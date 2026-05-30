@@ -29,18 +29,30 @@ logger = logging.getLogger(__name__)
 spark = SparkSession.builder.getOrCreate()
 
 try:
-    CONFIG_PATH = Path(__file__).parent.parent / "config" / "schema_config.json"
+    _SCRIPTS_DIR = Path(__file__).parent
 except NameError:
-    # Running in notebook/REPL where __file__ is not defined
-    CONFIG_PATH = Path("/Workspace/Users/c.voranipit@gmail.com/robust-databricks/reliability_engine/config/schema_config.json")
+    _SCRIPTS_DIR = Path("/Workspace/Users/c.voranipit@gmail.com/robust-databricks/reliability_engine/scripts")
+
+_CONFIG_DIR = _SCRIPTS_DIR.parent / "config"
+
+# schema_version widget: v1 (baseline), v2 (non-breaking), v3 (breaking).
+# Set via Databricks job parameter or dbutils.widgets for manual runs.
+# Defaults to v1 (production baseline) so scheduled runs are never affected.
+try:
+    _scenario = dbutils.widgets.get("schema_version")  # noqa: F821
+except Exception:
+    _scenario = "v1"
+
+SCHEMA_CONFIG_PATH = _CONFIG_DIR / f"schema_v{_scenario}.json"
 
 TARGET_TABLE = "reliability_engine.bronze.raw_orders"
 COST_LOG     = "reliability_engine.observability.cost_attribution_log"
 PIPELINE_ID  = "ingest_bronze_v1"
 
+
 def _schema_version() -> str:
-    with open(CONFIG_PATH) as f:
-        return json.load(f).get("version", "unknown")
+    with open(SCHEMA_CONFIG_PATH) as f:
+        return json.load(f).get("version", _scenario)
 
 
 def _df_to_schema_dict(df) -> dict[str, str]:
@@ -68,7 +80,7 @@ def ingest(df) -> int:
     #    SchemaBreakingChangeError → genuine schema change, logged to incident_log.
     #    FileNotFoundError / JSONDecodeError → infrastructure failure, propagates as-is.
     incoming_schema = _df_to_schema_dict(df)
-    sentinel_run(incoming_schema, spark=spark)
+    sentinel_run(incoming_schema, spark=spark, config_path=SCHEMA_CONFIG_PATH)
 
     # 2. Attach system metadata columns
     schema_ver  = _schema_version()

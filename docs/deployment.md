@@ -149,6 +149,72 @@ Variables declared in `databricks.yml`:
 
 ---
 
+## Demo: Three Schema Scenarios
+
+The pipeline accepts a `schema_version` job parameter (`v1` / `v2` / `v3`) that drives the sentinel scenario without touching any config file on disk.
+
+**Trigger from the Workflows UI:**
+Workflows → Reliability Pipeline → Run now → Edit parameters → set `schema_version`
+
+**Trigger from the CLI:**
+```bash
+databricks bundle run reliability_pipeline --target dev \
+  --python-named-params "schema_version=v3"
+```
+
+---
+
+### Scenario 1 — Baseline (`schema_version=v1`)
+
+No schema changes. All 4 tasks run to completion.
+
+**What to look for:**
+```sql
+SELECT * FROM reliability_engine.observability.sla_check_log ORDER BY checked_at DESC LIMIT 3;
+```
+All three SLA checks show `status = PASS`.
+
+---
+
+### Scenario 2 — Non-breaking change (`schema_version=v2`)
+
+Upstream adds `delivery_partner` column. Sentinel logs it and lets the pipeline continue.
+
+**What to look for:**
+```sql
+SELECT verdict, added_columns, evaluated_at
+FROM reliability_engine.observability.schema_change_log
+ORDER BY evaluated_at DESC LIMIT 1;
+-- verdict = NON_BREAKING, added_columns = ['delivery_partner']
+```
+
+All 4 tasks still complete. Data written to Bronze with the extra column preserved.
+
+---
+
+### Scenario 3 — Breaking change (`schema_version=v3`)
+
+Upstream removes `customer_id`. Sentinel raises `SchemaBreakingChangeError`. Pipeline halts at `ingest_bronze` — `dbt_run` and `sla_check` never start.
+
+**What to look for:**
+```sql
+SELECT event, removed_columns, affected_pipelines, evaluated_at
+FROM reliability_engine.observability.incident_log
+ORDER BY evaluated_at DESC LIMIT 1;
+-- event = PIPELINE_HALTED, removed_columns = ['customer_id']
+```
+
+In the DAG view: `generate_data` ✓, `ingest_bronze` ✗ (red), `dbt_run` and `sla_check` grey (skipped).
+Bronze row count is unchanged — zero rows written.
+
+---
+
+### Reset to baseline
+
+Run the job again with `schema_version=v1`. No config files need to be modified.
+
+---
+
 ## Tearing down
 
 ```bash

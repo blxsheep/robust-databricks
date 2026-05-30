@@ -3,6 +3,14 @@ resources:
     reliability_pipeline:
       name: "Reliability Pipeline — ${bundle.target}"
 
+      # schema_version drives the sentinel scenario:
+      #   v1 = baseline (production default)
+      #   v2 = non-breaking change (adds delivery_partner column)
+      #   v3 = breaking change (removes customer_id — pipeline halts at ingest_bronze)
+      parameters:
+        - name: schema_version
+          default: v1
+
       # Email on failure — catches broken schemas, SLA misses, and infra errors at 3am.
       email_notifications:
         on_failure:
@@ -39,6 +47,8 @@ resources:
           notebook_task:
             notebook_path: ${var.workspace_repo_path}/reliability_engine/scripts/ingest_bronze
             source: WORKSPACE
+            base_parameters:
+              schema_version: "{{job.parameters.schema_version}}"
 
         - task_key: dbt_run
           description: "Runs incremental dbt models: silver.orders_cleaned and gold.daily_revenue"

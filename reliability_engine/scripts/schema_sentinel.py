@@ -108,14 +108,20 @@ def classify(incoming_schema: dict[str, str], expected_schema: dict[str, str]) -
     )
 
 
-def run(incoming_schema: dict[str, str], spark=None) -> SentinelResult:
+def run(
+    incoming_schema: dict[str, str],
+    spark=None,
+    config_path: Path = CONFIG_PATH,
+) -> SentinelResult:
     """
     Entry point. Call with the schema of the incoming DataFrame.
 
     spark: active SparkSession — required to write observability logs to UC.
            If None, logs are printed only (local/test mode).
+    config_path: override to test NON_BREAKING (schema_v2.json) or BREAKING (schema_v3.json)
+                 scenarios without mutating schema_config.json on disk.
     """
-    expected = load_expected_schema()
+    expected = load_expected_schema(config_path)
     result = classify(incoming_schema, expected)
 
     log_entry = {

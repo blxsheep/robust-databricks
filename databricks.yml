@@ -24,6 +24,7 @@ targets:
       root_path: /Workspace/Users/c.voranipit@gmail.com/.bundle/${bundle.name}/${bundle.target}
     variables:
       workspace_repo_path: /Workspace/Users/c.voranipit@gmail.com/robust-databricks
+      warehouse_id: e7d27934b2137b5b
 
   prod:
     mode: production

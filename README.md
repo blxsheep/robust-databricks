@@ -95,6 +95,8 @@ That's it. No file swaps, no config edits. Each scenario is a deployed job — a
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+Raw batches arrive in a landing zone first; `ingest_bronze` promotes from it only after the sentinel passes, so a `BREAKING` halt leaves the source batch untouched and replayable once the schema is reconciled.
+
 ---
 
 ## Tech stack

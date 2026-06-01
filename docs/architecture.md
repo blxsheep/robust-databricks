@@ -11,13 +11,13 @@ The platform is structured as a linear pipeline with validation and observabilit
 │   generate_data.py                                               │
 │        │                                                         │
 │        ▼                                                         │
-│   schema_sentinel.py  ◄── config/schema_config.json             │
+│   schema_sentinel.py  ◄── config/schema_v{1,2,3}.json           │
 │        │                                                         │
 │        ├── NON_BREAKING ──► schema_change_log (observability)    │
 │        │        └──► pipeline continues                          │
 │        │                                                         │
 │        └── BREAKING ──────► incident_log (observability)         │
-│                 └──► RuntimeError raised, zero rows written       │
+│                 └──► SchemaBreakingChangeError, zero rows written │
 └─────────────────────────────────────────────────────────────────┘
                           │
                           ▼
@@ -74,12 +74,14 @@ This is the stand-in for an upstream source system. In production, replace with 
 
 `reliability_engine/scripts/schema_sentinel.py` — runs before any data enters Bronze.
 
-Compares the incoming DataFrame schema against `config/schema_config.json`. Three possible changes, two outcomes:
+Compares the incoming DataFrame schema against a versioned schema config. The config path is parameterized: `ingest_bronze` reads a `schema_version` widget (default `v1`) and resolves to `config/schema_v{n}.json`. Each deployed scenario job has a different `schema_version` hardcoded in `base_parameters`.
+
+Three possible changes, two outcomes:
 
 | Change type | Verdict | What happens |
 |---|---|---|
 | New column added | `NON_BREAKING` | Log to `schema_change_log`, pipeline continues |
-| Required column removed | `BREAKING` | Log to `incident_log`, `RuntimeError` raised, zero rows written |
+| Required column removed | `BREAKING` | Log to `incident_log`, `SchemaBreakingChangeError` raised, zero rows written |
 | Column type changed | `BREAKING` | Same as above |
 
 The sentinel is **stateless** — reads config, classifies, routes. No shared state between invocations. This is an explicit design constraint for horizontal scaling.
@@ -141,3 +143,20 @@ Three decisions that define the shape of the system — full reasoning in [ADR](
 **Detection at the ingestion boundary** — corrupt data never enters the warehouse. Catching schema drift at the dbt layer means it already landed in Bronze.
 
 **Incremental merge over append** — e-commerce orders are mutable (pending → shipped → delivered). Append-only models accumulate one row per state transition and cannot correct the past.
+
+---
+
+## Deployed jobs
+
+The bundle deploys four jobs to Databricks Workflows. Three are scenarios (same 4-task DAG, different `schema_version` parameter); one is a utility that wipes tables between demo cycles.
+
+| Job | `schema_version` | Behavior |
+|---|---|---|
+| `Reliability Pipeline — Baseline` | `v1` | All 4 tasks succeed; data flows through to gold |
+| `Reliability Pipeline — Non-Breaking` | `v2` | Sentinel logs to `schema_change_log`; all 4 tasks succeed |
+| `Reliability Pipeline — Breaking` | `v3` | Sentinel halts at `ingest_bronze`; `dbt_run` and `sla_check` never start |
+| `Reliability Pipeline — Reset` | — | Truncates all tables (Bronze, Silver, Gold, Observability) for a clean demo run |
+
+Each scenario is a static, named, deployed job — no parameter selection at trigger time, no config file mutation. This is the production pattern: predictable jobs that always do the same thing.
+
+See [Deployment](deployment.md) for the demo flow.

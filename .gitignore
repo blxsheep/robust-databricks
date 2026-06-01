@@ -4,3 +4,4 @@ site/
 # Private Claude workspace — strategy notes, life goals, outreach plans.
 # Contains personal financial info. Never commit.
 _claude/
+CLAUDE.md

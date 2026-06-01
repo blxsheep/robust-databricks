@@ -1,13 +1,15 @@
 # Robust Databricks — Data Reliability Engine
 
-> A data reliability platform built on Databricks Free Edition.  
 > Catches schema drift, late-arriving data, and runaway compute costs **at the boundary** — before damage propagates downstream.
+> Built on Databricks Free Edition. Open source. Reproducible.
+
+[![CI/CD](https://github.com/blxsheep/robust-databricks/actions/workflows/cicd.yml/badge.svg)](https://github.com/blxsheep/robust-databricks/actions/workflows/cicd.yml)
 
 ---
 
-## The Problem
+## The problem
 
-Three failures cause most production data incidents:
+Three failures cause the majority of production data incidents. All three are typically discovered **after** the damage is done.
 
 | Failure | How it usually goes |
 |---|---|
@@ -15,7 +17,36 @@ Three failures cause most production data incidents:
 | **Late-arriving updates** | An order placed as `pending` transitions to `cancelled` six hours later. The daily revenue report already closed. The number is wrong and can't be corrected without a full reprocess. |
 | **Runaway compute** | Every run reprocesses the entire dataset. Nobody notices until the cost chart arrives at the end of the month. |
 
-Most platforms catch these **reactively** — after the damage is done. This project catches them **at the boundary**, before corrupt or expensive work enters the warehouse.
+This project handles all three **at the boundary**, before corrupt or expensive work enters the warehouse.
+
+---
+
+## What's in the box
+
+| Component | What it does |
+|---|---|
+| **Schema Sentinel** | Classifies every incoming schema as `NON_BREAKING` or `BREAKING`. Halts ingestion on breaking — zero rows written. |
+| **Bronze ingestion with metadata** | Every row gets `_ingested_at`, `_schema_version`, `_source`. No silent writes. |
+| **Cost attribution log** | Every run records runtime, rows processed, estimated DBU + USD. Per-pipeline cost is queryable from SQL. |
+| **dbt incremental merge models** | Silver and Gold use merge strategy. Late-arriving updates correct the record without reprocessing history. |
+| **SLA monitor** | Three checks (freshness, completeness, schema consistency), each shipped with a `business_impact` label so the alert tells you what's at stake, not just what failed. |
+
+Deployed as code via **Databricks Asset Bundle**. Tests + bundle validate run on every push. Deploy to dev runs on every push to `main` (gated on tests passing).
+
+---
+
+## Demo — three scenarios, one click each
+
+After deploying the bundle, four jobs appear under Databricks Workflows. Run them in this order:
+
+| Step | Job | What happens |
+|---|---|---|
+| 1 | `Reliability Pipeline — Reset` | Truncates all tables — clean slate. |
+| 2 | `Reliability Pipeline — Baseline` | schema_v1. All 4 tasks green. `sla_check_log` shows 3 PASS rows. |
+| 3 | `Reliability Pipeline — Non-Breaking` | schema_v2 (adds `delivery_partner`). All 4 tasks green. `schema_change_log` shows the new column. |
+| 4 | `Reliability Pipeline — Breaking` | schema_v3 (removes `customer_id`). `ingest_bronze` red. `dbt_run` and `sla_check` skipped. `incident_log` shows `PIPELINE_HALTED`. Bronze row count unchanged — zero corruption. |
+
+That's it. No file swaps, no config edits. Each scenario is a deployed job — anyone with the workspace can reproduce the result.
 
 ---
 
@@ -28,12 +59,12 @@ Most platforms catch these **reactively** — after the damage is done. This pro
 │   generate_data.py                                               │
 │        │                                                         │
 │        ▼                                                         │
-│   schema_sentinel.py  ◄── config/schema_config.json             │
+│   schema_sentinel.py  ◄── config/schema_v{1,2,3}.json           │
 │        │                                                         │
-│        ├── NON_BREAKING ──► schema_change_log (observability)    │
+│        ├── NON_BREAKING ──► schema_change_log                    │
 │        │        └──► pipeline continues                          │
 │        │                                                         │
-│        └── BREAKING ──────► incident_log (observability)         │
+│        └── BREAKING ──────► incident_log                         │
 │                 └──► SchemaBreakingChangeError, zero rows written │
 └─────────────────────────────────────────────────────────────────┘
                           │
@@ -44,23 +75,15 @@ Most platforms catch these **reactively** — after the damage is done. This pro
 │   reliability_engine.bronze.raw_orders                           │
 │   + _ingested_at | _schema_version | _source                     │
 │                                                                  │
-│   ingest_bronze.py ──► cost_attribution_log (observability)      │
+│   ingest_bronze.py ──► cost_attribution_log                      │
 └─────────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     SILVER LAYER  (dbt)                          │
+│                     SILVER + GOLD  (dbt)                         │
 │                                                                  │
-│   silver.orders_cleaned                                          │
-│   incremental merge on order_id | watermark: updated_at          │
-└─────────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       GOLD LAYER  (dbt)                          │
-│                                                                  │
-│   gold.daily_revenue                                             │
-│   incremental merge on order_date                                │
+│   silver.orders_cleaned    incremental merge on order_id         │
+│   gold.daily_revenue       incremental merge on order_date       │
 └─────────────────────────────────────────────────────────────────┘
                           │
                           ▼
@@ -74,26 +97,26 @@ Most platforms catch these **reactively** — after the damage is done. This pro
 
 ---
 
-## Tech Stack
+## Tech stack
 
-- **Platform:** Databricks Free Edition (Unity Catalog, serverless compute)
+- **Platform:** Databricks Free Edition (Unity Catalog, serverless compute, Jobs)
 - **Storage:** Delta Lake (ACID transactions, schema enforcement, time travel)
 - **Transformation:** dbt-databricks (incremental merge strategy)
-- **Orchestration:** Databricks Jobs
+- **Orchestration:** Databricks Asset Bundle (4 jobs deployed from `databricks.yml`)
 - **Language:** Python 3.11, PySpark 3.5
-- **Testing:** pytest, delta-spark (local, no Databricks connection required)
+- **Testing:** pytest (8 tests, 6 pure-Python scenarios + 2 PySpark idempotency)
+- **CI/CD:** GitHub Actions — `test ⊥ validate → deploy` with explicit `needs` chain
 - **Docs:** MkDocs Material
-- **CI:** GitHub Actions
 
 ---
 
-## What It Does
+## How the system works
 
-### 1. Schema Sentinel
+### Schema Sentinel
 
 `reliability_engine/scripts/schema_sentinel.py`
 
-Runs **before any data enters Bronze**. Compares the incoming DataFrame schema against a versioned `schema_config.json` and classifies every change:
+Runs **before any data enters Bronze**. Compares the incoming DataFrame schema against a versioned config file. Classifies every change:
 
 | Change | Verdict | Consequence |
 |---|---|---|
@@ -106,37 +129,29 @@ The sentinel is **stateless by design** — reads config, classifies, routes. No
 Type comparison uses a normalized alias map (`int` = `integer`, `long` = `integer`, `float` = `double`, etc.) so Spark's internal type names never trigger false positives.
 
 ```python
+from schema_sentinel import SchemaBreakingChangeError, run
+from pathlib import Path
+
 # Non-breaking: new column is fine
-result = run({"order_id": "string", ..., "delivery_partner": "string"}, spark)
+result = run({"order_id": "string", ..., "delivery_partner": "string"},
+             spark=None,
+             config_path=Path("config/schema_v1.json"))
 # result.verdict → "NON_BREAKING"
+# result.added_columns → ["delivery_partner"]
 
 # Breaking: removed column halts the pipeline
 try:
-    run({"order_id": "string"}, spark)  # customer_id, product_id, etc. missing
+    run({"order_id": "string"},   # customer_id, product_id, etc. missing
+        spark=None,
+        config_path=Path("config/schema_v1.json"))
 except SchemaBreakingChangeError as e:
     # incident_log written, zero rows in Bronze
-```
-
-To test both scenarios locally:
-
-```bash
-cd reliability_engine
-
-# Non-breaking (adds delivery_partner column)
-cp config/schema_v2.json config/schema_config.json
-python scripts/ingest_bronze.py
-
-# Breaking (removes customer_id)
-cp config/schema_v3.json config/schema_config.json
-python scripts/ingest_bronze.py
-
-# Reset
-cp config/schema_v1.json config/schema_config.json
+    ...
 ```
 
 ---
 
-### 2. Bronze Ingestion with Metadata
+### Bronze Ingestion with Metadata
 
 `reliability_engine/scripts/ingest_bronze.py`
 
@@ -144,21 +159,21 @@ Every row written to `reliability_engine.bronze.raw_orders` carries three system
 
 ```
 _ingested_at       timestamp of write
-_schema_version    version from schema_config.json active at ingestion time
+_schema_version    version from the schema config active at ingestion time
 _source            pipeline identifier (ingest_bronze_v1)
 ```
 
 After each write, a cost attribution row is appended to `observability.cost_attribution_log`:
 
 ```
-pipeline_name | run_type | runtime_seconds | rows_processed | estimated_dbu | estimated_cost_usd
+pipeline_name | run_type | runtime_seconds | rows_processed | estimated_dbu | estimated_cost_usd | methodology
 ```
 
-No silent failures. Every run is observable.
+The `methodology` column makes the cost model explicit on every row — DBU proxy rate, Free Edition serverless, plus a note pointing at `system.billing.usage` for production replacement.
 
 ---
 
-### 3. Incremental dbt Models
+### Incremental dbt Models
 
 `robust_etl_ecomm/models/`
 
@@ -166,29 +181,21 @@ E-commerce orders are mutable — an order placed as `pending` will transition t
 
 Both models use merge strategy:
 
-**Silver — `orders_cleaned`**  
+**Silver — `orders_cleaned`**
 Incremental merge on `order_id`, watermarked by `updated_at`. Only rows newer than the current watermark are processed per run. Late-arriving updates overwrite stale records — the Silver table always holds current state.
 
-**Gold — `daily_revenue`**  
+**Gold — `daily_revenue`**
 Incremental merge on `order_date`. Re-aggregates the most recent date on each run to capture late arrivals.
-
-```sql
--- Silver watermark
-where updated_at > (select max(updated_at) from {{ this }})
-
--- Gold re-aggregation window
-where cast(created_at as date) >= (select max(order_date) from {{ this }})
-```
 
 Both models use `on_schema_change='fail'` — dbt errors rather than silently drifting.
 
 ---
 
-### 4. SLA Monitoring
+### SLA Monitoring
 
 `reliability_engine/scripts/sla_monitor.py`
 
-Three checks per run. Each carries a `business_impact` label explaining *why* the check exists, not just whether it passed:
+Three checks per run. Each carries a `business_impact` label explaining *why* the check exists:
 
 | Check | Threshold | `business_impact` |
 |---|---|---|
@@ -200,7 +207,7 @@ Thresholds live in `config/sla_config.json`. Changing SLA rules is a config edit
 
 ---
 
-### 5. Cost Governance
+### Cost Governance
 
 `reliability_engine/notebooks/cost_projection.py`
 
@@ -215,9 +222,9 @@ In production: replace estimated_dbu with system.billing.usage.
 
 ---
 
-## Observability Tables
+## Observability tables
 
-Four append-only Delta tables. Never truncate — they are the audit trail.
+Four append-only Delta tables. Never truncated by production jobs — they are the audit trail.
 
 | Table | Written by | Purpose |
 |---|---|---|
@@ -226,24 +233,35 @@ Four append-only Delta tables. Never truncate — they are the audit trail.
 | `observability.sla_check_log` | SLA monitor | Freshness, completeness, schema consistency results |
 | `observability.cost_attribution_log` | Ingestion | Runtime, rows, estimated DBU and USD per run |
 
+(The `reset_data` demo job intentionally truncates these too — without it, demo cycles accumulate noise. Production scenarios never touch observability.)
+
 ---
 
-## Tests and CI
+## Tests and CI/CD
 
-**Idempotency tests** run locally with no Databricks connection:
+**Schema scenario tests** (`reliability_engine/tests/test_schema_scenarios.py`) — 6 tests covering baseline / non-breaking / breaking using the actual `schema_v{1,2,3}.json` configs. Pure Python, no Spark. Runs in 0.02s in CI.
+
+**Idempotency tests** (`reliability_engine/tests/test_idempotency.py`) — PySpark + delta-spark, no Databricks connection required. Run the merge pipeline twice on identical input, assert row count unchanged + no duplicate order_ids.
 
 ```bash
-pytest reliability_engine/tests/
+poetry run pytest -v
 ```
 
-- `test_incremental_idempotent` — run the merge pipeline twice on identical input, assert row count is unchanged
-- `test_no_duplicate_order_ids` — assert no duplicate `order_id` values after two runs
+**CI/CD** (`.github/workflows/cicd.yml`) — one workflow, three jobs:
 
-**CI** (`.github/workflows/test.yml`) — triggers on every push: installs `pyspark`, `delta-spark`, `pytest`, runs the full test suite.
+```
+push to any branch
+  ├── test       (pytest, all branches)
+  └── validate   (bundle validate, all branches)
+              ↓  both must pass
+           deploy (bundle deploy + workspace sync, main only)
+```
+
+`test` and `validate` run in parallel. `deploy` has `needs: [test, validate]` AND `if: github.ref == 'refs/heads/main'`. After deploying the bundle, the workspace Git folder is synced automatically via `databricks repos update`.
 
 ---
 
-## Key Design Decisions
+## Key design decisions
 
 Full reasoning in [`reliability_engine/docs/ADR.md`](reliability_engine/docs/ADR.md).
 
@@ -261,14 +279,15 @@ Full reasoning in [`reliability_engine/docs/ADR.md`](reliability_engine/docs/ADR
 
 - Databricks Free Edition workspace (`signup.databricks.com`)
 - Databricks CLI authenticated (`databricks auth login`)
-- Python 3.11, Poetry
+- Python 3.11, Poetry, Java 17 (for local pytest)
+- GitHub repo secrets `DATABRICKS_HOST` and `DATABRICKS_TOKEN` (for CI/CD)
 
 ### Install
 
 ```bash
 git clone https://github.com/blxsheep/robust-databricks.git
 cd robust-databricks
-poetry install
+poetry install --with dev
 ```
 
 ### Unity Catalog setup
@@ -284,7 +303,11 @@ CREATE SCHEMA IF NOT EXISTS reliability_engine.gold;
 CREATE SCHEMA IF NOT EXISTS reliability_engine.observability;
 ```
 
-### dbt setup
+### Workspace Git folder (one-time)
+
+In the Databricks UI: Workspace → Create → Git folder → paste this repo's GitHub URL → confirm the folder name. CI/CD pulls the latest `main` into this folder after every deploy.
+
+### dbt profile
 
 ```yaml
 # ~/.dbt/profiles.yml
@@ -297,58 +320,67 @@ robust_etl_ecomm:
       http_path: <starter-warehouse-http-path>
       token: <personal-access-token>
       schema: silver
+      catalog: reliability_engine
 ```
 
 HTTP path: **SQL Warehouses → Starter Warehouse → Connection Details**
 
-```bash
-cd robust_etl_ecomm
-dbt debug    # verify connection before running
-dbt run
-```
-
-### Run the pipeline
+### Deploy the bundle
 
 ```bash
-cd reliability_engine
-python scripts/generate_data.py   # generate 500 synthetic orders
-python scripts/ingest_bronze.py   # validate + write to Bronze
-python scripts/sla_monitor.py     # run SLA checks
+# Validate the YAML (no workspace deploy)
+databricks bundle validate --profile DEFAULT
+
+# Deploy to dev — creates the 4 jobs in your workspace
+databricks bundle deploy --target dev
+
+# Run a specific scenario
+databricks bundle run scenario_baseline --target dev
+databricks bundle run scenario_breaking --target dev
+databricks bundle run reset_data --target dev
 ```
 
-### Sync to Databricks workspace
-
-```bash
-./scripts/databricks_force_sync.sh
-```
+See [`docs/deployment.md`](docs/deployment.md) for the full deployment guide.
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 reliability_engine/
-├── config/                    # Schema versions and SLA thresholds
+├── config/
+│   ├── schema_v{1,2,3}.json    # Schema scenarios
+│   └── sla_config.json
 ├── scripts/
-│   ├── generate_data.py       # Synthetic order data
-│   ├── ingest_bronze.py       # Ingestion with sentinel + metadata
-│   ├── schema_sentinel.py     # Schema change classifier
-│   └── sla_monitor.py         # SLA checks
-├── notebooks/
-│   └── cost_projection.py     # 30-day cost divergence chart
+│   ├── _orders_generator.py    # Shared data factory (plain module)
+│   ├── generate_data.py        # Notebook task — write 500 synthetic orders
+│   ├── ingest_bronze.py        # Notebook task — sentinel + Bronze write
+│   ├── schema_sentinel.py      # Schema change classifier
+│   ├── sla_monitor.py          # Notebook task — 3 SLA checks
+│   └── reset_data.py           # Notebook task — TRUNCATE all tables (demo only)
 ├── tests/
-│   └── test_idempotency.py    # Incremental pipeline idempotency
+│   ├── test_idempotency.py     # PySpark, requires Java 17
+│   └── test_schema_scenarios.py  # Pure Python, no Spark
+├── notebooks/
+│   └── cost_projection.py      # 30-day cost divergence chart
 └── docs/
-    └── ADR.md                 # Architecture decision records
+    └── ADR.md                  # Architecture decision records
 
-robust_etl_ecomm/              # dbt project
-├── models/silver/             # orders_cleaned (incremental merge)
-└── models/gold/               # daily_revenue (incremental aggregation)
+robust_etl_ecomm/               # dbt project
+├── models/silver/              # orders_cleaned (incremental merge)
+├── models/gold/                # daily_revenue (incremental aggregation)
+└── macros/                     # Schema-name override macro
 
-scripts/                       # Ops utilities
-└── databricks_force_sync.sh   # Force-sync workspace repo from GitHub
+resources/                      # DAB job definitions — one per file
+├── scenario_baseline.job.yml      # schema_v1 — baseline
+├── scenario_non_breaking.job.yml  # schema_v2 — adds delivery_partner
+├── scenario_breaking.job.yml      # schema_v3 — removes customer_id (halts)
+└── reset_data.job.yml             # TRUNCATE all tables
 
-docs/                          # MkDocs site source
+databricks.yml                  # DAB bundle root
+.github/workflows/cicd.yml      # CI/CD — test ⊥ validate → deploy
+scripts/                        # Ops scripts (workspace sync)
+docs/                           # MkDocs site source
 ```
 
 ---
@@ -362,3 +394,11 @@ Deliberately deferred — v1 solves the detection and governance layer:
 - Terraform for Unity Catalog provisioning
 - Great Expectations / Soda integration
 - Multi-workspace Unity Catalog federation
+
+---
+
+## License + contact
+
+MIT. Open to senior data engineering roles, remote, on the Databricks stack.
+
+GitHub: [`@blxsheep`](https://github.com/blxsheep) · DM on LinkedIn.

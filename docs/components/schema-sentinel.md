@@ -2,7 +2,7 @@
 
 **File:** `reliability_engine/scripts/schema_sentinel.py`
 
-The schema sentinel runs at the ingestion boundary. It compares the incoming DataFrame schema against the active `config/schema_config.json` before any data enters Bronze. If the change is breaking, no rows are written — ever.
+The schema sentinel runs at the ingestion boundary. It compares the incoming DataFrame schema against a versioned `config/schema_v{n}.json` (selected by the `schema_version` job parameter) before any data enters Bronze. If the change is breaking, no rows are written — ever.
 
 ---
 
@@ -49,7 +49,7 @@ def load_expected_schema(config_path: Path = CONFIG_PATH) -> dict[str, str]:
     return {col["name"]: _normalize_type(col["type"]) for col in config["columns"]}
 ```
 
-Returns `{column_name: normalized_type}` from the active `schema_config.json`. Raises `FileNotFoundError` if the config is missing or `json.JSONDecodeError` if malformed — these are infrastructure failures and propagate as-is, not as schema errors.
+Returns `{column_name: normalized_type}` from the config file at `config_path` (typically `schema_v{n}.json` for the requested scenario). Raises `FileNotFoundError` if the config is missing or `json.JSONDecodeError` if malformed — these are infrastructure failures and propagate as-is, not as schema errors.
 
 ### 2. Classify the incoming schema
 
@@ -159,13 +159,15 @@ python reliability_engine/scripts/schema_sentinel.py
 
 ## Updating the expected schema
 
-`schema_config.json` is the single source of schema truth. Changing it is a config edit — no code changes required.
+Each scenario job loads a specific `schema_v{n}.json` via the `schema_version` widget parameter. To evolve the production-baseline schema:
 
-Before a schema migration:
+1. Add a new versioned config file (e.g. `schema_v4.json`) reflecting the new upstream schema
+2. Update the `base_parameters` in `resources/scenario_baseline.job.yml` to point at the new version
+3. Run `dbt run --full-refresh` if column types or names changed
+4. Deploy: `databricks bundle deploy --target dev`
+5. Trigger the baseline job — the sentinel will now validate against the new schema
 
-1. Update `config/schema_config.json` to match the new upstream schema
-2. Run `dbt run --full-refresh` if column types or names changed
-3. Run the next ingestion — the sentinel will now pass the new schema
+The versioned files become the historical record of the production-baseline schema over time, queryable from Git.
 
 !!! warning
-    Updating `schema_config.json` **before** the upstream sends the new schema will cause all current ingestions to fail with a BREAKING verdict (columns present in config but missing from incoming data). Coordinate the timing carefully.
+    Promoting a new baseline **before** the upstream sends the new schema will cause all current ingestions to fail with a BREAKING verdict (columns present in config but missing from incoming data). Coordinate the timing carefully — promote the bundle change AFTER the upstream cutover.

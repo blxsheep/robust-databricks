@@ -66,5 +66,22 @@ SLA Monitor + Cost Attribution  ← observability layer
 
 - [Setup guide](setup.md) — get the stack running end-to-end
 - [Architecture](architecture.md) — system diagram and data flow
+- [Deployment (DAB)](deployment.md) — deploy 4 jobs (baseline, non-breaking, breaking, reset) with one command
 - [Schema Sentinel](components/schema-sentinel.md) — how schema changes are caught at the boundary
+- [Testing](testing.md) — 8 tests, parallel CI, the test-then-deploy chain
 - [ADR](reference/adr.md) — the three decisions that define the shape of the system
+
+---
+
+## The demo
+
+After deployment, four jobs appear in Databricks Workflows:
+
+| Job | Outcome |
+|---|---|
+| Reliability Pipeline — Reset | Truncates all tables, clean slate |
+| Reliability Pipeline — Baseline | All 4 tasks succeed (schema_v1) |
+| Reliability Pipeline — Non-Breaking | sentinel logs, pipeline continues (schema_v2) |
+| Reliability Pipeline — Breaking | sentinel halts at ingestion, downstream skipped (schema_v3) |
+
+Run them in that order. The observability table rows tell the full story — no terminal video required.

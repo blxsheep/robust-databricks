@@ -1,15 +1,17 @@
 # Schema Config Reference
 
-The schema config files live in `reliability_engine/config/`. The sentinel reads `schema_config.json` at ingestion time. The versioned files (`schema_v1.json`, `schema_v2.json`, `schema_v3.json`) are test fixtures representing schema evolution scenarios.
+The schema config files live in `reliability_engine/config/`. The sentinel reads `schema_v{n}.json` based on the `schema_version` widget value (default `v1`). Each deployed scenario job has a different version hardcoded in its `base_parameters`. No config file is mutated at runtime.
 
 ---
 
-## schema_config.json — Active config
+## schema_v1.json — Baseline (8 columns)
+
+The production-default expected schema. All columns required, no optional fields. This is what `Reliability Pipeline — Baseline` runs against.
 
 ```json
 {
   "version": "v1",
-  "description": "Active expected schema — sentinel reads this file at ingestion time",
+  "description": "Baseline schema — 8 columns",
   "columns": [
     {"name": "order_id",     "type": "string",    "nullable": false},
     {"name": "customer_id",  "type": "string",    "nullable": false},
@@ -23,15 +25,9 @@ The schema config files live in `reliability_engine/config/`. The sentinel reads
 }
 ```
 
-This is the **single source of schema truth**. The sentinel reads this file on every invocation. Change it to evolve the expected schema.
-
 ---
 
 ## Schema version fixtures
-
-### schema_v1.json — Baseline (8 columns)
-
-The default expected schema. All columns required, no optional fields.
 
 ### schema_v2.json — Non-breaking change
 
@@ -42,12 +38,14 @@ Adds `delivery_partner` (nullable). Demonstrates that adding an optional column 
 ```
 
 Sentinel verdict: `NON_BREAKING` — pipeline continues, logs to `schema_change_log`.
+Run via: `Reliability Pipeline — Non-Breaking` job.
 
 ### schema_v3.json — Breaking change
 
 Removes `customer_id`. Any downstream consumer that expects this column (Silver, Gold, BI tools) will break.
 
-Sentinel verdict: `BREAKING` — `RuntimeError` raised, zero rows written to Bronze, logs to `incident_log`.
+Sentinel verdict: `BREAKING` — `SchemaBreakingChangeError` raised, zero rows written to Bronze, logs to `incident_log`.
+Run via: `Reliability Pipeline — Breaking` job.
 
 ---
 

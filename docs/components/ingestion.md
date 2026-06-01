@@ -39,7 +39,7 @@ Every row written to Bronze includes three audit columns:
 | Column | Type | Value |
 |---|---|---|
 | `_ingested_at` | timestamp | UTC timestamp of the write |
-| `_schema_version` | string | `version` field from active `schema_config.json` |
+| `_schema_version` | string | `version` field from the active `schema_v{n}.json` (driven by the `schema_version` widget) |
 | `_source` | string | `ingest_bronze_v1` |
 
 These columns enable:
@@ -123,8 +123,10 @@ Produces synthetic e-commerce orders:
 The base time is configurable for deterministic test data:
 
 ```python
-from generate_data import generate_orders
+from _orders_generator import generate_orders
 from datetime import datetime
 
 orders = generate_orders(n=100, base_time=datetime(2026, 1, 1))
 ```
+
+`generate_orders` lives in `_orders_generator.py` (a plain Python module without the `# Databricks notebook source` header) so it can be imported from both `generate_data.py` and the `__main__` block of `ingest_bronze.py`. The notebook header is a one-way door — files with it cannot be imported as modules.

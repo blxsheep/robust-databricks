@@ -6,12 +6,16 @@ End-to-end setup from a fresh Databricks Free Edition workspace to a running pip
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11 + [Poetry](https://python-poetry.org/)
+- Java 17 (required by PySpark 3.5 — see [Testing](testing.md) if you have a later Java)
 - A Databricks Free Edition workspace — sign up at `signup.databricks.com`
-- `dbt-databricks` installed locally
+- Databricks CLI v0.200+ (`brew install databricks/tap/databricks`)
+- (For CI/CD) GitHub repo secrets `DATABRICKS_HOST` and `DATABRICKS_TOKEN`
 
 ```bash
-pip install dbt-databricks mkdocs mkdocs-material
+git clone https://github.com/blxsheep/robust-databricks.git
+cd robust-databricks
+poetry install --with dev
 ```
 
 ---
@@ -41,11 +45,44 @@ CREATE SCHEMA IF NOT EXISTS reliability_engine.gold;
 CREATE SCHEMA IF NOT EXISTS reliability_engine.observability;
 ```
 
-The observability tables are created automatically on first run (Delta append writes create the table if it doesn't exist).
+Tables are created automatically on first write (Delta append creates the table if it doesn't exist).
 
 ---
 
-## Step 3 — Configure dbt
+## Step 3 — Databricks CLI auth
+
+```bash
+databricks auth login --host https://<your-workspace-url>
+```
+
+This writes a `DEFAULT` profile to `~/.databrickscfg`. Verify:
+
+```bash
+databricks auth env --profile DEFAULT
+```
+
+---
+
+## Step 4 — Workspace Git folder (one-time)
+
+The `notebook_task` resources reference scripts at a workspace path. You need to create a Git folder in the workspace first.
+
+**In the Databricks UI:**
+
+1. Workspace sidebar → navigate to `/Users/<your-email>/`
+2. Click **Create → Git folder**
+3. Paste the GitHub repo URL
+4. Confirm the folder name is `robust-databricks`
+
+After this one-time setup, CI/CD keeps the folder in sync — every push to `main` triggers `databricks repos update` automatically. To force-sync manually:
+
+```bash
+./scripts/databricks_force_sync.sh
+```
+
+---
+
+## Step 5 — dbt profile
 
 Create `~/.dbt/profiles.yml`:
 
@@ -73,57 +110,59 @@ Fix any connection issues before running models.
 
 ---
 
-## Step 4 — Deploy the pipeline via Asset Bundle
-
-The pipeline is orchestrated as a Databricks Asset Bundle (DAB). One deploy replaces all manual notebook steps.
+## Step 6 — Deploy the bundle
 
 ```bash
-# Validate the bundle config
-databricks bundle validate
+# Validate the YAML (no workspace deploy)
+databricks bundle validate --profile DEFAULT
 
-# Deploy to dev (job schedule is paused)
-databricks bundle deploy --target dev --var="warehouse_id=<your-warehouse-id>"
-
-# Trigger a manual run
-databricks bundle run reliability_pipeline --target dev
+# Deploy to dev — creates 4 jobs in your workspace
+databricks bundle deploy --target dev
 ```
 
-The job runs all four tasks in order: `generate_data → ingest_bronze → dbt_run → sla_check`.
+After deploy, you'll see four jobs under **Workflows**:
 
-See [Deployment (DAB)](deployment.md) for full instructions including how to find your warehouse ID and set up auth.
+| Job name | Schema scenario |
+|---|---|
+| `Reliability Pipeline — Baseline` | schema_v1 (production default) |
+| `Reliability Pipeline — Non-Breaking` | schema_v2 (adds `delivery_partner`) |
+| `Reliability Pipeline — Breaking` | schema_v3 (removes `customer_id`) |
+| `Reliability Pipeline — Reset` | Truncates all tables for clean demo cycles |
+
+Trigger a manual run:
+
+```bash
+databricks bundle run scenario_baseline --target dev
+```
+
+See [Deployment (DAB)](deployment.md) for the full deployment guide including the demo flow.
 
 ---
 
-## Running steps manually (without the bundle)
+## Step 7 — Local runs (without the bundle)
 
-If you want to run individual steps outside the job:
-
-**Ingestion:**
+If you want to run individual scripts outside the deployed bundle:
 
 ```bash
-# From reliability_engine/scripts/
-python ingest_bronze.py
-```
+# Ingest 500 synthetic orders end-to-end
+poetry run python reliability_engine/scripts/ingest_bronze.py
 
-**dbt transforms:**
-
-```bash
+# Run dbt transforms
 cd robust_etl_ecomm
-dbt run --full-refresh   # baseline
-dbt run                  # incremental
+dbt run --full-refresh   # baseline (also captures the full-refresh runtime)
+dbt run                  # incremental (captures the steady-state runtime)
+
+# Run SLA checks
+poetry run python reliability_engine/scripts/sla_monitor.py
 ```
 
-**SLA checks:**
-
-```bash
-python reliability_engine/scripts/sla_monitor.py
-```
+These require a live Databricks connection (Spark session config inherits from the active profile).
 
 ---
 
-## Step 7 — Cost projection (optional)
+## Step 8 — Cost projection (optional)
 
-Open `reliability_engine/notebooks/cost_projection.py` as a Databricks notebook. Fill in the benchmark runtimes from Step 5:
+Open `reliability_engine/notebooks/cost_projection.py` as a Databricks notebook. Fill in the benchmark runtimes from Step 7:
 
 ```python
 FULL_REFRESH_RUNTIME_S = 42   # seconds from `dbt run --full-refresh`
@@ -134,43 +173,58 @@ Run the notebook to generate the 30-day cost divergence chart.
 
 ---
 
-## Testing schema change scenarios
+## Testing the three schema scenarios
 
-The sentinel reads `config/schema_config.json` at ingestion time. Swap the active config to simulate schema changes:
+After Step 6, the three scenarios are deployed jobs — trigger them from the Workflows UI or via the CLI:
 
-=== "Non-breaking (new column)"
-
-    ```bash
-    cp reliability_engine/config/schema_v2.json reliability_engine/config/schema_config.json
-    python reliability_engine/scripts/ingest_bronze.py
-    # → observability.schema_change_log gets a NON_BREAKING entry
-    # → data is written normally
-    ```
-
-=== "Breaking (removed column)"
+=== "Baseline (schema_v1)"
 
     ```bash
-    cp reliability_engine/config/schema_v3.json reliability_engine/config/schema_config.json
-    python reliability_engine/scripts/ingest_bronze.py
-    # → observability.incident_log gets PIPELINE_HALTED
-    # → SchemaBreakingChangeError raised, zero rows written to Bronze
+    databricks bundle run scenario_baseline --target dev
+    # All 4 tasks succeed. sla_check_log → 3 PASS rows.
     ```
 
-=== "Reset to baseline"
+=== "Non-breaking (schema_v2)"
 
     ```bash
-    cp reliability_engine/config/schema_v1.json reliability_engine/config/schema_config.json
+    databricks bundle run scenario_non_breaking --target dev
+    # All 4 tasks succeed.
+    # schema_change_log → verdict=NON_BREAKING, added_columns=['delivery_partner']
     ```
+
+=== "Breaking (schema_v3)"
+
+    ```bash
+    databricks bundle run scenario_breaking --target dev
+    # generate_data ✓, ingest_bronze ✗, dbt_run + sla_check skipped.
+    # incident_log → event=PIPELINE_HALTED, removed_columns=['customer_id']
+    # Bronze row count unchanged — zero rows written.
+    ```
+
+=== "Reset between cycles"
+
+    ```bash
+    databricks bundle run reset_data --target dev
+    # All tables (bronze, silver, gold, observability) truncated.
+    # Ready for the next demo cycle.
+    ```
+
+No config file mutation. Each scenario is a deployed job with `schema_version` hardcoded in `base_parameters`.
 
 ---
 
-## Run tests
+## Run tests locally
 
 ```bash
-pytest reliability_engine/tests/
+poetry run pytest -v
 ```
 
-Tests run locally with PySpark + delta-spark — no Databricks connection required. CI runs these on every push via `.github/workflows/test.yml`.
+Two test files:
+
+- `test_schema_scenarios.py` — 6 sentinel scenario tests (pure Python, no Spark needed)
+- `test_idempotency.py` — incremental merge idempotency (PySpark + delta-spark, requires Java 17)
+
+See [Testing](testing.md) for the Java 17 setup if `JAVA_GATEWAY_EXITED` appears.
 
 ---
 

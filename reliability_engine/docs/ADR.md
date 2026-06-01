@@ -28,7 +28,7 @@ Catching it at ingestion means the damage radius is zero. The sentinel raises an
 
 The sentinel is stateless — it reads config, compares, routes. This is an explicit design constraint: a stateful sentinel introduces shared state that complicates horizontal scaling and makes the classifier harder to test in isolation.
 
-**Consequence:** The ingestion layer is the single point of schema truth. `schema_config.json` must be kept current. A schema migration requires updating the config file before the next ingestion run.
+**Consequence:** The ingestion layer is the single point of schema truth. The expected schema config is parameterized — `ingest_bronze` reads a `schema_version` widget and loads `config/schema_v{n}.json`. Each scenario job (baseline, non-breaking, breaking) has its own hardcoded version. In production, a single deployed job carries the production-baseline version, and schema migrations are handled by updating the versioned config + re-deploying the bundle — never by mutating a file at runtime.
 
 ---
 

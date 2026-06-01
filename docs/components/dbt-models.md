@@ -1,6 +1,6 @@
 # dbt Models
 
-**Project:** `robust_etl_ecomm/`
+**Project:** `dbt_reliability/`
 
 Two incremental models transform raw Bronze data into analytics-ready Silver and Gold tables. Both use merge strategy — orders are mutable, so append-only is not an option.
 
@@ -8,7 +8,7 @@ Two incremental models transform raw Bronze data into analytics-ready Silver and
 
 ## Silver — `orders_cleaned`
 
-**File:** `robust_etl_ecomm/models/silver/orders_cleaned.sql`  
+**File:** `dbt_reliability/models/silver/orders_cleaned.sql`  
 **Target:** `reliability_engine.silver.orders_cleaned`
 
 ```sql
@@ -53,7 +53,7 @@ If the upstream Bronze schema changes unexpectedly, dbt halts rather than silent
 
 ## Gold — `daily_revenue`
 
-**File:** `robust_etl_ecomm/models/gold/daily_revenue.sql`  
+**File:** `dbt_reliability/models/gold/daily_revenue.sql`  
 **Target:** `reliability_engine.gold.daily_revenue`
 
 ```sql
@@ -128,7 +128,7 @@ This is the [dbt-recommended approach](https://docs.getdbt.com/docs/build/custom
 ## Running the models
 
 ```bash
-cd robust_etl_ecomm
+cd dbt_reliability
 
 # Full refresh — reprocesses everything from Bronze
 # Use for: first run, schema migrations, baseline cost benchmark
@@ -169,7 +169,7 @@ Feed these into `reliability_engine/notebooks/cost_projection.py` to project 30-
 `~/.dbt/profiles.yml`:
 
 ```yaml
-robust_etl_ecomm:
+dbt_reliability:
   target: dev
   outputs:
     dev:

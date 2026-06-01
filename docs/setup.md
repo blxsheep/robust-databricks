@@ -87,7 +87,7 @@ After this one-time setup, CI/CD keeps the folder in sync — every push to `mai
 Create `~/.dbt/profiles.yml`:
 
 ```yaml
-robust_etl_ecomm:
+dbt_reliability:
   target: dev
   outputs:
     dev:
@@ -102,7 +102,7 @@ robust_etl_ecomm:
 Verify the connection:
 
 ```bash
-cd robust_etl_ecomm
+cd dbt_reliability
 dbt debug
 ```
 
@@ -148,7 +148,7 @@ If you want to run individual scripts outside the deployed bundle:
 poetry run python reliability_engine/scripts/ingest_bronze.py
 
 # Run dbt transforms
-cd robust_etl_ecomm
+cd dbt_reliability
 dbt run --full-refresh   # baseline (also captures the full-refresh runtime)
 dbt run                  # incremental (captures the steady-state runtime)
 

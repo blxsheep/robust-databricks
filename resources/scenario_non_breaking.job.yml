@@ -25,7 +25,7 @@ resources:
             - task_key: ingest_bronze
           environment_key: dbt_env
           dbt_task:
-            project_directory: ${var.workspace_repo_path}/robust_etl_ecomm
+            project_directory: ${var.workspace_repo_path}/dbt_reliability
             commands:
               - dbt run
             warehouse_id: ${var.warehouse_id}

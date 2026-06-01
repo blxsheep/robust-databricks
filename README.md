@@ -175,7 +175,7 @@ The `methodology` column makes the cost model explicit on every row — DBU prox
 
 ### Incremental dbt Models
 
-`robust_etl_ecomm/models/`
+`dbt_reliability/models/`
 
 E-commerce orders are mutable — an order placed as `pending` will transition through `confirmed`, `shipped`, `delivered`. An append-only model accumulates one row per state transition and cannot correct the past.
 
@@ -311,7 +311,7 @@ In the Databricks UI: Workspace → Create → Git folder → paste this repo's 
 
 ```yaml
 # ~/.dbt/profiles.yml
-robust_etl_ecomm:
+dbt_reliability:
   target: dev
   outputs:
     dev:
@@ -366,7 +366,7 @@ reliability_engine/
 └── docs/
     └── ADR.md                  # Architecture decision records
 
-robust_etl_ecomm/               # dbt project
+dbt_reliability/               # dbt project
 ├── models/silver/              # orders_cleaned (incremental merge)
 ├── models/gold/                # daily_revenue (incremental aggregation)
 └── macros/                     # Schema-name override macro

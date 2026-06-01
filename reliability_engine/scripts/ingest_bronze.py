@@ -35,6 +35,16 @@ except NameError:
 
 _CONFIG_DIR = _SCRIPTS_DIR.parent / "config"
 
+
+def resolve_schema_config_path(scenario: str) -> Path:
+    """Resolve the on-disk path for a given schema_version value.
+
+    The scenario value is the literal job parameter ('v1' | 'v2' | 'v3') —
+    it ALREADY contains the 'v' prefix. Do not prepend another one.
+    """
+    return _CONFIG_DIR / f"schema_{scenario}.json"
+
+
 # schema_version widget: v1 (baseline), v2 (non-breaking), v3 (breaking).
 # Set via Databricks job parameter or dbutils.widgets for manual runs.
 # Defaults to v1 (production baseline) so scheduled runs are never affected.
@@ -43,7 +53,7 @@ try:
 except Exception:
     _scenario = "v1"
 
-SCHEMA_CONFIG_PATH = _CONFIG_DIR / f"schema_v{_scenario}.json"
+SCHEMA_CONFIG_PATH = resolve_schema_config_path(_scenario)
 
 TARGET_TABLE = "reliability_engine.bronze.raw_orders"
 COST_LOG     = "reliability_engine.observability.cost_attribution_log"

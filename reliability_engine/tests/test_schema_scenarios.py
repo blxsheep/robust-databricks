@@ -80,3 +80,105 @@ def test_breaking_schema_lists_affected_pipelines():
     expected = load_expected_schema(EXPECTED_CONFIG)
     result = classify(_incoming_from_config("3"), expected)
     assert len(result.affected_pipelines) > 0
+
+
+# ── Regression: DAB job parameters resolve to existing config files ──────
+#
+# The bug this guards against: ingest_bronze.py used f"schema_v{scenario}.json"
+# while the DAB job passed scenario="v1" (already prefixed) — producing
+# "schema_vv1.json" which doesn't exist. CI passed because the scenario tests
+# above use a different helper ("1"/"2"/"3" + manual f-string) and never
+# exercised the path-construction code in ingest_bronze.py.
+#
+# This parametrized test crosses the boundary: it uses the exact string
+# values from resources/scenario_*.job.yml AND calls into ingest_bronze.py.
+
+@pytest.mark.parametrize("scenario", ["v1", "v2", "v3"])
+def test_dab_job_parameter_resolves_to_existing_config(scenario):
+    """Each schema_version value used in resources/scenario_*.job.yml must
+    resolve to a real on-disk config file via ingest_bronze.resolve_schema_config_path().
+    """
+    from ingest_bronze import resolve_schema_config_path
+    path = resolve_schema_config_path(scenario)
+    assert path.exists(), (
+        f"schema_version={scenario!r} resolves to {path}, which does not exist. "
+        f"This means the DAB job will fail at runtime with FileNotFoundError."
+    )
+
+
+# ── Filesystem references audit ──────────────────────────────────────────
+#
+# Every workspace path string in the repo — YAML notebook references AND
+# the hardcoded /Workspace/.../robust-databricks/... fallbacks in Python
+# scripts — must map to a real file or directory in the local repo. The
+# Databricks workspace Git folder clones this repo, so if a path exists
+# locally it will exist in the workspace; if it doesn't, the pipeline
+# fails at runtime.
+#
+# This catches: renamed/moved files that didn't update all callers,
+# typos in path construction, removed directories still referenced.
+
+import re
+
+REPO_ROOT = Path(__file__).parent.parent.parent
+RESOURCES_DIR = REPO_ROOT / "resources"
+SCRIPTS_DIR = REPO_ROOT / "reliability_engine" / "scripts"
+
+# Matches ${var.workspace_repo_path}/some/path or /Workspace/Users/.../robust-databricks/some/path
+_DAB_VAR_RE = re.compile(r"\$\{var\.workspace_repo_path\}/(\S+?)(?:\s|$|\")")
+_WORKSPACE_LITERAL_RE = re.compile(
+    r'"(/Workspace/Users/[^/]+/robust-databricks/([^"]+))"'
+)
+
+
+def _path_exists_for_notebook_or_dir(rel_path: str) -> bool:
+    """notebook_path references omit the .py suffix; dbt_task and other
+    references point at directories. Accept either a file (with optional
+    .py) or a directory."""
+    candidate = REPO_ROOT / rel_path
+    if candidate.exists():
+        return True
+    return candidate.with_suffix(".py").exists()
+
+
+def test_all_dab_workspace_paths_resolve():
+    """Every ${var.workspace_repo_path}/... reference in resources/*.yml
+    must point at a real file (with or without .py) or directory in the repo.
+    """
+    missing = []
+    for yml_file in sorted(RESOURCES_DIR.glob("*.yml")):
+        for match in _DAB_VAR_RE.finditer(yml_file.read_text()):
+            ref = match.group(1).rstrip(",")
+            if not _path_exists_for_notebook_or_dir(ref):
+                missing.append(f"{yml_file.name} → {ref}")
+
+    assert not missing, (
+        "DAB resource files reference paths that don't exist in the repo:\n  "
+        + "\n  ".join(missing)
+        + "\n\nThis means the pipeline will fail at runtime with "
+          "'Unable to access the notebook' or similar."
+    )
+
+
+def test_python_fallback_paths_match_local_files():
+    """Every hardcoded /Workspace/Users/.../robust-databricks/... path in
+    reliability_engine/scripts/*.py (the try/except NameError fallbacks)
+    must map to a real local file or directory.
+
+    These fallback paths are only used when __file__ is undefined (i.e. in
+    Databricks notebooks), so they're never exercised by other tests.
+    """
+    missing = []
+    for py_file in sorted(SCRIPTS_DIR.glob("*.py")):
+        for match in _WORKSPACE_LITERAL_RE.finditer(py_file.read_text()):
+            suffix = match.group(2)  # the part after robust-databricks/
+            candidate = REPO_ROOT / suffix
+            if not candidate.exists():
+                missing.append(f"{py_file.name} → {suffix}")
+
+    assert not missing, (
+        "Python fallback paths reference files that don't exist in the repo:\n  "
+        + "\n  ".join(missing)
+        + "\n\nThese paths only fire in Databricks notebooks (__file__ undefined). "
+          "If they break, the failure only surfaces at workspace runtime — never locally."
+    )

@@ -399,8 +399,4 @@ Deliberately deferred — v1 solves the detection and governance layer:
 
 ---
 
-## License + contact
 
-MIT. Open to senior data engineering roles, remote, on the Databricks stack.
-
-GitHub: [`@blxsheep`](https://github.com/blxsheep) · DM on LinkedIn.

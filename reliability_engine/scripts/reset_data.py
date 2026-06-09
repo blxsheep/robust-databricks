@@ -15,20 +15,21 @@ append-only observability logs with stable schemas.
 """
 
 from pyspark.sql import SparkSession
+from _config import cfg
 
 spark = SparkSession.builder.getOrCreate()
 
 # DROP resets the schema contract back to zero; next run seeds from schema_v1.json.
-BRONZE_TABLE = "reliability_engine.bronze.raw_orders"
+BRONZE_TABLE = cfg["BRONZE_TABLE"]
 
 # TRUNCATE clears rows while preserving dbt-managed or stable schemas.
 TRUNCATE_TABLES = [
-    "reliability_engine.silver.orders_cleaned",
-    "reliability_engine.gold.daily_revenue",
-    "reliability_engine.observability.schema_change_log",
-    "reliability_engine.observability.incident_log",
-    "reliability_engine.observability.sla_check_log",
-    "reliability_engine.observability.cost_attribution_log",
+    cfg["SILVER_TABLE"],
+    cfg["GOLD_TABLE"],
+    cfg["SCHEMA_CHANGE_LOG"],
+    cfg["INCIDENT_LOG"],
+    cfg["SLA_LOG"],
+    cfg["COST_LOG"],
 ]
 
 print("=" * 50)

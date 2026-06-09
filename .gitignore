@@ -1,6 +1,9 @@
 .claude/settings.local.json
 site/
 
+# Environment secrets — credentials, tokens. Never commit.
+.env
+
 # Private Claude workspace — strategy notes, life goals, outreach plans.
 # Contains personal financial info. Never commit.
 _claude/

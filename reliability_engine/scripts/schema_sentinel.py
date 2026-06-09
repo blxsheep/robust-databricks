@@ -24,6 +24,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from _config import cfg
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -38,8 +39,8 @@ except NameError:
 class SchemaBreakingChangeError(Exception):
     """Raised when an incoming schema has a breaking change (removed column or type change)."""
 
-SCHEMA_CHANGE_LOG = "reliability_engine.observability.schema_change_log"
-INCIDENT_LOG      = "reliability_engine.observability.incident_log"
+SCHEMA_CHANGE_LOG = cfg["SCHEMA_CHANGE_LOG"]
+INCIDENT_LOG      = cfg["INCIDENT_LOG"]
 
 
 @dataclass
@@ -145,7 +146,7 @@ def classify(incoming_schema: dict[str, str], expected_schema: dict[str, str]) -
 def run(
     incoming_schema: dict[str, str],
     spark=None,
-    target_table: str = "reliability_engine.bronze.raw_orders",
+    target_table: str = cfg["BRONZE_TABLE"],
     fallback_config_path: Path = CONFIG_PATH,
 ) -> SentinelResult:
     """

@@ -22,6 +22,7 @@ from pathlib import Path
 from pyspark.sql import SparkSession, functions as F
 from _orders_generator import BRONZE_SCHEMA, generate_orders
 from schema_sentinel import SchemaBreakingChangeError, run as sentinel_run
+from _config import cfg
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -55,9 +56,9 @@ except Exception:
 
 SCHEMA_CONFIG_PATH = resolve_schema_config_path(_scenario)
 
-TARGET_TABLE = "reliability_engine.bronze.raw_orders"
-COST_LOG     = "reliability_engine.observability.cost_attribution_log"
-PIPELINE_ID  = "ingest_bronze_v1"
+TARGET_TABLE = cfg["BRONZE_TABLE"]
+COST_LOG     = cfg["COST_LOG"]
+PIPELINE_ID  = cfg["PIPELINE_ID"]
 
 
 def _schema_version() -> str:
@@ -124,8 +125,8 @@ def ingest(df) -> int:
 
 
 def _log_cost(runtime_seconds: float, rows_processed: int, run_type: str):
-    DBU_RATE_USD = 0.22
-    estimated_dbu = runtime_seconds / 3600 * 2  # ~2 DBU/hr serverless
+    DBU_RATE_USD = float(cfg["DBU_RATE_USD"])
+    estimated_dbu = runtime_seconds / 3600 * int(cfg["DBU_PER_HOUR"])
     entry = {
         "pipeline_name":      PIPELINE_ID,
         "run_type":           run_type,

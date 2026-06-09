@@ -8,11 +8,12 @@ reliability_engine.bronze.raw_orders.
 
 from pyspark.sql import SparkSession
 from _orders_generator import BRONZE_SCHEMA, generate_orders
+from _config import cfg
 
 spark = SparkSession.builder.getOrCreate()
 
-TARGET_TABLE = "reliability_engine.bronze.raw_orders"
-NUM_ROWS = 500
+TARGET_TABLE = cfg["BRONZE_TABLE"]
+NUM_ROWS     = int(cfg["NUM_ROWS"])
 
 
 def main():

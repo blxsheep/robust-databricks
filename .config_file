@@ -1,0 +1,24 @@
+# Pipeline catalog + schema layout
+CATALOG=reliability_engine
+BRONZE_SCHEMA=bronze
+SILVER_SCHEMA=silver
+GOLD_SCHEMA=gold
+OBSERVABILITY_SCHEMA=observability
+
+# Fully-qualified table names
+BRONZE_TABLE=reliability_engine.bronze.raw_orders
+SILVER_TABLE=reliability_engine.silver.orders_cleaned
+GOLD_TABLE=reliability_engine.gold.daily_revenue
+SCHEMA_CHANGE_LOG=reliability_engine.observability.schema_change_log
+INCIDENT_LOG=reliability_engine.observability.incident_log
+SLA_LOG=reliability_engine.observability.sla_check_log
+COST_LOG=reliability_engine.observability.cost_attribution_log
+
+# Pipeline runtime settings
+PIPELINE_ID=ingest_bronze_v1
+NUM_ROWS=500
+
+# Cost model — DBU proxy rate, Free Edition serverless
+# In production replace estimated_dbu with system.billing.usage
+DBU_RATE_USD=0.22
+DBU_PER_HOUR=2

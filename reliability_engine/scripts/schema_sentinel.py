@@ -1,13 +1,22 @@
 """
 schema_sentinel.py
-Stateless schema change classifier.
+Schema change classifier.
 
-Compares incoming DataFrame schema against config/schema_config.json
-BEFORE any data enters Bronze. Classifies as NON_BREAKING or BREAKING,
-routes accordingly, and appends to observability tables.
+Compares the incoming DataFrame schema against the CURRENT schema of the
+Bronze target table — the last accepted contract — BEFORE any data enters
+Bronze. Classifies as NON_BREAKING or BREAKING, routes accordingly, and
+appends to observability tables.
 
-Stateless by design — reads config, compares, routes. No internal state.
-Each invocation is independent, enabling horizontal scaling.
+On first run (target table does not yet exist) it falls back to
+config/schema_v1.json as the seed contract. After that, the live table
+schema is authoritative: columns accepted by a previous run become
+required by the next one.
+
+System columns (_ingested_at, _schema_version, _source) are stripped from
+the table schema before comparison — they are pipeline metadata added at
+write time, not part of the upstream contract being validated.
+
+Each invocation is independent — no internal state is held between calls.
 """
 
 import json
@@ -64,14 +73,39 @@ def _normalize_type(t: str) -> str:
 
 
 def load_expected_schema(config_path: Path = CONFIG_PATH) -> dict[str, str]:
-    """Returns {column_name: normalized_type} from the active schema_config.json.
+    """Returns {column_name: normalized_type} from a schema config JSON file.
 
+    Used as the first-run seed when the target table does not yet exist.
     Raises FileNotFoundError if config is missing, json.JSONDecodeError if malformed.
     These are infrastructure failures — callers should not catch them as schema changes.
     """
     with open(config_path) as f:
         config = json.load(f)
     return {col["name"]: _normalize_type(col["type"]) for col in config["columns"]}
+
+
+def load_expected_schema_from_table(spark, table_name: str) -> dict[str, str] | None:
+    """Read the current Delta table schema as the expected baseline.
+
+    The live table is the last accepted contract: columns that were written
+    in a prior run are required by this run. Any removal is BREAKING.
+
+    System columns (_ingested_at, _schema_version, _source) are excluded —
+    they are added by the pipeline at write time and are not part of the
+    upstream schema being validated.
+
+    Returns None if the table does not yet exist (first run) or on any
+    Spark error. Callers must fall back to load_expected_schema() in that case.
+    """
+    try:
+        fields = spark.table(table_name).schema.fields
+        return {
+            f.name: _normalize_type(f.dataType.simpleString())
+            for f in fields
+            if not f.name.startswith("_")
+        }
+    except Exception:
+        return None
 
 
 def classify(incoming_schema: dict[str, str], expected_schema: dict[str, str]) -> SentinelResult:
@@ -111,17 +145,34 @@ def classify(incoming_schema: dict[str, str], expected_schema: dict[str, str]) -
 def run(
     incoming_schema: dict[str, str],
     spark=None,
-    config_path: Path = CONFIG_PATH,
+    target_table: str = "reliability_engine.bronze.raw_orders",
+    fallback_config_path: Path = CONFIG_PATH,
 ) -> SentinelResult:
     """
     Entry point. Call with the schema of the incoming DataFrame.
 
-    spark: active SparkSession — required to write observability logs to UC.
-           If None, logs are printed only (local/test mode).
-    config_path: override to test NON_BREAKING (schema_v2.json) or BREAKING (schema_v3.json)
-                 scenarios without mutating schema_config.json on disk.
+    spark: active SparkSession — required for live table lookup and UC writes.
+           If None, falls back to fallback_config_path (local/test mode).
+    target_table: the Bronze table whose current schema is the expected baseline.
+    fallback_config_path: seed schema used on first run (table does not exist yet)
+                          or when spark is unavailable.
+
+    Schema resolution order:
+      1. Live table schema (spark available + table exists) — production path
+      2. fallback_config_path                              — first run or test mode
     """
-    expected = load_expected_schema(config_path)
+    expected = None
+    schema_source = fallback_config_path.name
+
+    if spark is not None:
+        expected = load_expected_schema_from_table(spark, target_table)
+        if expected is not None:
+            schema_source = f"live table: {target_table}"
+
+    if expected is None:
+        expected = load_expected_schema(fallback_config_path)
+
+    logger.info("Schema baseline: %s", schema_source)
     result = classify(incoming_schema, expected)
 
     log_entry = {

@@ -26,9 +26,18 @@ Catching schema drift at the transformation layer (dbt) means the bad data has a
 
 Catching it at ingestion means the damage radius is zero. The sentinel raises an exception, writes to `incident_log`, and the pipeline exits. No rows written. The warehouse stays clean.
 
-The sentinel is stateless — it reads config, compares, routes. This is an explicit design constraint: a stateful sentinel introduces shared state that complicates horizontal scaling and makes the classifier harder to test in isolation.
+**Baseline: live table schema, not a static config file.**
+The sentinel compares incoming data against the *current schema of `bronze.raw_orders`*, not a pinned config. The live table is the last accepted contract: if a previous run wrote `delivery_partner`, the next run must include it — any removal is BREAKING. System columns (`_ingested_at`, `_schema_version`, `_source`) are stripped before comparison since they are pipeline metadata, not upstream contract columns.
 
-**Consequence:** The ingestion layer is the single point of schema truth. The expected schema config is parameterized — `ingest_bronze` reads a `schema_version` widget and loads `config/schema_v{n}.json`. Each scenario job (baseline, non-breaking, breaking) has its own hardcoded version. In production, a single deployed job carries the production-baseline version, and schema migrations are handled by updating the versioned config + re-deploying the bundle — never by mutating a file at runtime.
+On first run (table does not yet exist) the sentinel falls back to `config/schema_v1.json` as the seed. This is the only time the config file is authoritative. After the first successful write the table owns the contract.
+
+This is more production-realistic than a static config: a static file requires a manual update every time a non-breaking change is accepted into the warehouse, and goes stale silently if that update is missed. The live table never goes stale — it *is* the current state.
+
+**Trade-off:** Because the live table schema is the baseline, `reset_data.py` must DROP `bronze.raw_orders` (not just TRUNCATE) to reset the schema contract between demo runs. TRUNCATE clears rows but leaves columns — a `delivery_partner` column left over from a Non-Breaking run would cause the next Baseline run to flag it as removed (BREAKING). DROP forces the next run to reseed from `schema_v1.json`.
+
+**Each invocation is independent** — no internal state is held between calls. The live table read happens at call time; the sentinel holds no reference to prior results.
+
+**Consequence:** The ingestion layer is the single point of schema truth. The `schema_version` widget in `ingest_bronze` controls which scenario-shaped data is *generated and ingested*, not which config file the sentinel compares against. Each scenario job (baseline, non-breaking, breaking) has its own hardcoded version for data generation. The sentinel's baseline always comes from the live table (or the v1 seed on first run).
 
 ---
 

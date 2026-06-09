@@ -31,7 +31,7 @@ def _incoming_from_config(version: str) -> dict[str, str]:
 
 def test_baseline_schema_passes():
     """v1 incoming matches v1 expected — no changes, pipeline runs clean."""
-    result = run(_incoming_from_config("1"), spark=None, config_path=EXPECTED_CONFIG)
+    result = run(_incoming_from_config("1"), spark=None, fallback_config_path=EXPECTED_CONFIG)
     assert result.verdict == "NON_BREAKING"
     assert result.added_columns == []
     assert result.removed_columns == []
@@ -42,7 +42,7 @@ def test_baseline_schema_passes():
 
 def test_non_breaking_schema_logged_and_continues():
     """v2 incoming adds delivery_partner — NON_BREAKING, no exception, pipeline continues."""
-    result = run(_incoming_from_config("2"), spark=None, config_path=EXPECTED_CONFIG)
+    result = run(_incoming_from_config("2"), spark=None, fallback_config_path=EXPECTED_CONFIG)
     assert result.verdict == "NON_BREAKING"
     assert "delivery_partner" in result.added_columns
     assert result.removed_columns == []
@@ -52,7 +52,7 @@ def test_non_breaking_schema_logged_and_continues():
 def test_non_breaking_does_not_raise():
     """v2 must not raise — a non-breaking change should never halt the pipeline."""
     try:
-        run(_incoming_from_config("2"), spark=None, config_path=EXPECTED_CONFIG)
+        run(_incoming_from_config("2"), spark=None, fallback_config_path=EXPECTED_CONFIG)
     except SchemaBreakingChangeError:
         pytest.fail("SchemaBreakingChangeError raised on a non-breaking schema change")
 
@@ -62,7 +62,7 @@ def test_non_breaking_does_not_raise():
 def test_breaking_schema_halts_pipeline():
     """v3 incoming removes customer_id — BREAKING, SchemaBreakingChangeError raised."""
     with pytest.raises(SchemaBreakingChangeError):
-        run(_incoming_from_config("3"), spark=None, config_path=EXPECTED_CONFIG)
+        run(_incoming_from_config("3"), spark=None, fallback_config_path=EXPECTED_CONFIG)
 
 
 def test_breaking_schema_identifies_removed_column():

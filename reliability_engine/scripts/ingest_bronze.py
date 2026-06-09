@@ -90,7 +90,12 @@ def ingest(df) -> int:
     #    SchemaBreakingChangeError → genuine schema change, logged to incident_log.
     #    FileNotFoundError / JSONDecodeError → infrastructure failure, propagates as-is.
     incoming_schema = _df_to_schema_dict(df)
-    sentinel_run(incoming_schema, spark=spark, config_path=SCHEMA_CONFIG_PATH)
+    sentinel_run(
+        incoming_schema,
+        spark=spark,
+        target_table=TARGET_TABLE,
+        fallback_config_path=_CONFIG_DIR / "schema_v1.json",
+    )
 
     # 2. Attach system metadata columns
     schema_ver  = _schema_version()
@@ -102,7 +107,7 @@ def ingest(df) -> int:
         .withColumn("_schema_version", F.lit(schema_ver))
         .withColumn("_source",         F.lit(PIPELINE_ID))
     )
-    df_enriched.write.format("delta").mode("append").saveAsTable(TARGET_TABLE)
+    df_enriched.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(TARGET_TABLE)
 
     rows_written = df_enriched.count()
     runtime      = (datetime.now(timezone.utc) - start).total_seconds()
@@ -135,7 +140,16 @@ def _log_cost(runtime_seconds: float, rows_processed: int, run_type: str):
 
 
 if __name__ == "__main__":
-    orders = generate_orders(500)
-    df = spark.createDataFrame(orders, schema=BRONZE_SCHEMA)
+    if _scenario == "v2":
+        from _orders_generator import BRONZE_SCHEMA_V2, generate_orders_v2
+        orders = generate_orders_v2(500)
+        df = spark.createDataFrame(orders, schema=BRONZE_SCHEMA_V2)
+    elif _scenario == "v3":
+        from _orders_generator import BRONZE_SCHEMA_V3, generate_orders_v3
+        orders = generate_orders_v3(500)
+        df = spark.createDataFrame(orders, schema=BRONZE_SCHEMA_V3)
+    else:
+        orders = generate_orders(500)
+        df = spark.createDataFrame(orders, schema=BRONZE_SCHEMA)
     rows = ingest(df)
     print(f"Ingested {rows} rows into {TARGET_TABLE}")
